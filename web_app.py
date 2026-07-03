@@ -155,7 +155,7 @@ if AI_READY:
                     try:
                         img = Image.open(sts_image)
                         # ПОДКЛЮЧАЕМ STRICTLY ВЕРСИЮ 2.5 FLASH
-                        model = genai.GenerativeModel('gemini-1.5-flash')
+                        model = genai.GenerativeModel('gemini-2.5-flash')
                         
                         prompt = """
                         Это фотография техпаспорта (СТС) транспортного средства Кыргызской Республики. 
