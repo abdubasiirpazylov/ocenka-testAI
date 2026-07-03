@@ -1,9 +1,9 @@
 streamlit
 docxtpl
-docxcompose
-setuptools
 num2words
 pandas
-openpyxl
 gspread
 google-auth
+openpyxl
+google-generativeai
+Pillow
