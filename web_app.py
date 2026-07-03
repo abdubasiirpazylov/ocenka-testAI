@@ -5,15 +5,33 @@ from docx.oxml.ns import qn
 import io
 import os
 import re 
+import json
 from num2words import num2words
 import pandas as pd
 from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 
-TEMPLATE_NAME = "образец отчета1.docx"
+# --- ИМПОРТЫ ДЛЯ ИСКУССТВЕННОГО ИНТЕЛЛЕКТА ---
+try:
+    import google.generativeai as genai
+    from PIL import Image
+    HAS_AI = True
+except ImportError:
+    HAS_AI = False
+
+TEMPLATE_NAME = "образец отчета.docx"
 
 st.set_page_config(page_title="Генератор Отчетов - Гарант Оценка", layout="wide")
+
+# =========================================================
+# НАСТРОЙКА ИИ GEMINI (ВЕРСИЯ 2.5 FLASH)
+# =========================================================
+if HAS_AI and "GEMINI_API_KEY" in st.secrets:
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    AI_READY = True
+else:
+    AI_READY = False
 
 # =========================================================
 # БАЗА ДАННЫХ АДМИНИСТРАТИВНОГО ДЕЛЕНИЯ КЫРГЫЗСТАНА
@@ -114,7 +132,7 @@ def clear_fields():
 # =========================================================
 
 st.title("🚗 Главное рабочее место оценщика")
-st.markdown("Заполните данные и прикрепите готовый фотоотчет от эксперта.")
+st.markdown("Заполните данные, загрузите техпаспорт и прикрепите фотоотчет.")
 
 if os.path.exists(TEMPLATE_NAME):
     st.success(f"✅ Базовый шаблон отчета (`{TEMPLATE_NAME}`) успешно подключен автоматически.")
@@ -123,6 +141,72 @@ else:
     st.warning(f"⚠️ Файл `{TEMPLATE_NAME}` не найден. Загрузите его вручную ниже:")
     template_source = st.file_uploader("Загрузите шаблон отчета", type="docx")
 
+# =========================================================
+# БЛОК СКАНИРОВАНИЯ ТЕХПАСПОРТА (GEMINI 2.5 FLASH)
+# =========================================================
+if AI_READY:
+    with st.expander("🤖 Умный сканер техпаспорта (Распознавание по фото через Gemini 2.5)", expanded=True):
+        st.info("💡 Загрузите фото техпаспорта (СТС). ИИ сам прочитает и вставит данные в поля ниже.")
+        sts_image = st.file_uploader("Загрузить фото техпаспорта (JPG, PNG)", type=["jpg", "jpeg", "png"], key="sts_uploader")
+        
+        if sts_image is not None:
+            if st.button("🔍 Распознать данные", type="primary"):
+                with st.spinner("Новейший движок Gemini 2.5 Flash анализирует фотографию..."):
+                    try:
+                        img = Image.open(sts_image)
+                        # ПОДКЛЮЧАЕМ STRICTLY ВЕРСИЮ 2.5 FLASH
+                        model = genai.GenerativeModel('gemini-1.5-flash')
+                        
+                        prompt = """
+                        Это фотография техпаспорта (СТС) транспортного средства Кыргызской Республики. 
+                        Твоя задача — внимательно изучить документ и извлечь следующие данные. 
+                        Верни ответ СТРОГО в формате JSON, без каких-либо дополнительных слов, комментариев или markdown-разметки (никаких ```json). 
+                        Если каких-то данных не видно, верни пустую строку "".
+                        
+                        Формат JSON:
+                        {
+                            "car_model": "Марка и модель авто",
+                            "reg_num": "Государственный номер (все буквы и цифры слитно в верхнем регистре)",
+                            "vin": "Идентификационный номер (VIN)",
+                            "tech_passport": "Номер бланка техпаспорта (буквы и цифры)",
+                            "year": "Год выпуска",
+                            "color": "Цвет кузова",
+                            "engine_vol": "Объем двигателя (только цифры, например: 2.5 или 2000)",
+                            "body_type": "Тип кузова"
+                        }
+                        """
+                        
+                        response = model.generate_content([prompt, img])
+                        
+                        raw_json = response.text.strip()
+                        if raw_json.startswith("```json"):
+                            raw_json = raw_json[7:]
+                        if raw_json.startswith("```"):
+                            raw_json = raw_json[3:]
+                        if raw_json.endswith("```"):
+                            raw_json = raw_json[:-3]
+                            
+                        extracted_data = json.loads(raw_json)
+                        
+                        st.session_state["car_model"] = extracted_data.get("car_model", "")
+                        st.session_state["reg_num"] = extracted_data.get("reg_num", "")
+                        st.session_state["vin"] = extracted_data.get("vin", "")
+                        st.session_state["tech_passport"] = extracted_data.get("tech_passport", "")
+                        st.session_state["year"] = extracted_data.get("year", "")
+                        st.session_state["color"] = extracted_data.get("color", "")
+                        st.session_state["engine_vol"] = extracted_data.get("engine_vol", "")
+                        st.session_state["body_type"] = extracted_data.get("body_type", "")
+                        
+                        st.success("✅ Данные успешно распознаны через Gemini 2.5 и вставлены в форму!")
+                        st.rerun() 
+                        
+                    except Exception as e:
+                        st.error(f"❌ Ошибка распознавания: {e}. Заполните поля вручную.")
+else:
+    st.info("⚠️ Сканер техпаспорта недоступен. Добавьте GEMINI_API_KEY в Secrets.")
+
+# =========================================================
+
 col_hdr1, col_hdr2 = st.columns([4, 1])
 with col_hdr1:
     st.header("1. Ввод данных")
@@ -130,6 +214,7 @@ with col_hdr2:
     st.write("") 
     st.button("🧹 Очистить форму", on_click=clear_fields, use_container_width=True, type="secondary")
 
+# Загружаем обе таблицы для комплексной проверки
 df_preview = get_cached_preview()
 df_db = get_cached_db()
 
@@ -148,7 +233,6 @@ with col1:
     
     customer = st.text_input("ФИО Заказчика:", key="customer")
     
-    # --- УМНЫЙ И СВЕРХЛЕГКИЙ БЛОК АДРЕСА С АЙМАКОМ ---
     st.markdown("**Адрес регистрации**")
     c_geo1, c_geo2, c_geo3 = st.columns(3)
     with c_geo1:
@@ -156,25 +240,21 @@ with col1:
     with c_geo2:
         selected_district = st.selectbox("Район / Округ:", KG_REGIONS[selected_region], key="district_select")
     with c_geo3:
-        # Дополнительное поле для села или аймака
         aymak = st.text_input("Село / Айыл аймагы:", placeholder="Например: с. Ленинское", key="aymak_input")
         
     street_detail = st.text_input("Улица, дом, квартира:", placeholder="Например: ул. Токтогула, д. 42, кв. 5", key="street_address")
     
-    # Умная сборка финальной строки адреса
     if aymak.strip():
         full_address = f"Кыргызская Республика, {selected_region}, {selected_district}, {aymak.strip()}, {street_detail.strip()}"
     else:
         full_address = f"Кыргызская Республика, {selected_region}, {selected_district}, {street_detail.strip()}"
         
-    # Убираем возможные лишние запятые в конце, если улица не заполнена
     full_address = full_address.strip(", ")
-    
     st.caption(f"**Итоговый адрес для отчета:** {full_address}")
-    # -----------------------------------------------------
     
     sum_num = st.text_input("Сумма ущерба цифрами:", placeholder="Например: 247300", key="sum_num")
     
+    # --- СУММА СТРОГО С МАЛЕНЬКОЙ БУКВЫ И БЕЗ СИМВОЛОВ PIPE ---
     generated_sum_words = ""
     if sum_num:
         try:
@@ -196,6 +276,7 @@ with col1:
 
 with col2:
     st.subheader("Данные автомобиля и услуги")
+    st.caption("✨ *Эти поля заполняются автоматически при сканировании техпаспорта*")
     car_model = st.text_input("Марка, модель:", key="car_model")
     reg_num = st.text_input("Гос. номер:", key="reg_num")
     vin = st.text_input("VIN код:", key="vin")
@@ -265,7 +346,6 @@ if current_passport and current_passport in existing_passports:
 if warnings_list:
     has_duplicates = True
     st.error(f"⛔ **ГЕНЕРАЦИЯ ЗАБЛОКИРОВАНА!**\n\nДанные: {', '.join(warnings_list)} уже числятся в базе (найдено совпадение в Google Sheets)!\n\nОбязательно нажмите серую кнопку **«🧹 Очистить форму»** в самом верху.")
-# --------------------------------------------------
 
 st.header("2. Описание повреждений и ремонта")
 
@@ -289,7 +369,7 @@ DAMAGE_TEMPLATES = {
 REPAIR_TEMPLATES = {
     "--- Выберите шаблон ---": "",
     "[Кузов] Стандартные работы": "Для восстановления требуется выполнить комплекс слесарно-кузовных, рихтовочных и малярно-окрасочных работ с применением расходных материалов, с последующей сборкой и регулировкой навесных элементов.",
-    "[Оптика] Замена фары": "Демонтаж, монтаж (замена) блок-фары передней (указать сторону) в сборе.",
+    "[Оптика] Замена фары": "Демонтаж, монтаж (замена) block-фары передней (указать сторону) в сборе.",
     "[Стекла] Лобовое стекло (база)": "Замена стекла ветрового (вклейка) с использованием комплекта однокомпонентного полиуретанового клея.",
     "[Стекла] Лобовое стекло (+датчики)": "Замена стекла ветрового (вклейка) с использованием комплекта однокомпонентного полиуретанового клея и переустановкой датчика дождя/камеры слежения.",
     "[Стекла] Боковое стекло": "Снятие обивки двери, очистка внутренней полости от осколков, замена стекла двери.",
@@ -400,6 +480,7 @@ if template_source is not None:
             doc.save(buffer)
             buffer.seek(0)
             
+            # Дата отчета улетает ТОЛЬКО к шефу в Google Таблицы, в Word её нет
             row_boss = [report_num, car_model, reg_num, date_ocenki, date_otcheta, service_cost]
             row_db = [report_num, reg_num, vin, tech_passport, date_otcheta]
             
