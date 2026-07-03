@@ -124,6 +124,12 @@ def clear_fields():
     if "date_otcheta" in st.session_state:
         st.session_state["date_otcheta"] = datetime.now().strftime("%d.%m.%Y")
         
+    # Сброс умных выпадающих списков на значения по умолчанию
+    if "region_select" in st.session_state:
+        st.session_state["region_select"] = list(KG_REGIONS.keys())[0]
+    if "district_select" in st.session_state:
+        st.session_state["district_select"] = KG_REGIONS[list(KG_REGIONS.keys())[0]][0]
+        
     st.session_state.damage_text = DEFAULT_DAMAGE_SUFFIX
     st.session_state.repair_text = f"Для восстановления требуется выполнить комплекс слесарно-кузовных, рихтовочных и малярно-окрасочных работ с применением расходных материалов, с последующей сборкой и регулировкой навесных элементов.\n{DEFAULT_REPAIR_SUFFIX}"
 
@@ -145,17 +151,14 @@ else:
 # БЛОК МУЛЬТИ-СКАНИРОВАНИЯ ТЕХПАСПОРТА (GEMINI 2.5 FLASH)
 # =========================================================
 if AI_READY:
-    with st.expander("🤖 Умный сканер техпаспорта (Загрузка нескольких фото)", expanded=True):
-        st.info("💡 Можно загрузить сразу несколько фото (лицевую и оборотную стороны, или все листы электронного СТС).")
-        
-        # ДОБАВЛЕН ПАРАМЕТР accept_multiple_files=True
+    with st.expander("🤖 Умный сканер техпаспорта (Полное распознавание авто + хозяина)", expanded=True):
+        st.info("💡 Загрузите фото техпаспорта (можно обе стороны сразу). ИИ сам проверит адреса и исправит опечатки.")
         sts_images = st.file_uploader("Загрузить фото техпаспорта (одно или несколько)", type=["jpg", "jpeg", "png"], key="sts_uploader", accept_multiple_files=True)
         
-        if sts_images: # Проверяем, что загружен хотя бы один файл
+        if sts_images:
             if st.button("🔍 Распознать данные", type="primary"):
                 with st.spinner(f"Движок Gemini 2.5 Flash изучает документы ({len(sts_images)} шт.)..."):
                     try:
-                        # Открываем все загруженные изображения через Pillow
                         images_pil = []
                         for img_file in sts_images:
                             img_file.seek(0)
@@ -163,15 +166,32 @@ if AI_READY:
                         
                         model = genai.GenerativeModel('gemini-2.5-flash')
                         
-                        prompt = """
+                        # Превращаем наш словарь словарей в текст для ИИ
+                        kg_regions_json = json.dumps(KG_REGIONS, ensure_ascii=False)
+                        
+                        # --- ОБНОВЛЕННЫЙ ПРОМПТ С ЗАЩИТОЙ ОТ ОШИБОК И АВТОКОРРЕКТУРОЙ ---
+                        prompt = f"""
                         Это фотографии техпаспорта (СТС) транспортного средства Кыргызской Республики. 
-                        Здесь может быть несколько страниц или обе стороны документа (лицевая и оборотная).
-                        Твоя задача — внимательно изучить ВСЕ предоставленные фотографии, сопоставить информацию и извлечь следующие данные. 
+                        Здесь могут быть обе стороны документа (лицевая и оборотная) либо листы электронного варианта.
+                        Твоя задача — внимательно изучить ВСЕ фотографии, сопоставить информацию и извлечь данные автомобиля, а также данные О СОБСТВЕННИКЕ (ХОЗЯИНЕ).
+                        
+                        ОБРАТИ ВНИМАНИЕ НА АДРЕС! В документе могут быть опечатки (например, "Леннинский" вместо "Ленинский") или сокращения (пропуск "Кыргызская Республика").
+                        Я передаю тебе строгий системный справочник регионов и районов. Ты должен найти в адресе владельца область/город и район, и сопоставить их со справочником. 
+                        Выдай ТОЧНОЕ совпадение из справочника. Улицу, номер дома и квартиры оставь строго как написано в документе (например: "ул. Ахунбаева, дом 34").
+
+                        СПРАВОЧНИК ОБЛАСТЕЙ И РАЙОНОВ:
+                        {kg_regions_json}
+                        
                         Верни ответ СТРОГО в формате JSON, без каких-либо дополнительных слов, комментариев или markdown-разметки (никаких ```json). 
                         Если каких-то данных не видно ни на одной из фотографий, верни пустую строку "".
                         
                         Формат JSON:
-                        {
+                        {{
+                            "customer": "ФИО Собственника/Владельца авто полностью",
+                            "region": "ТОЧНОЕ название ключа (области/города) из предоставленного Справочника",
+                            "district": "ТОЧНОЕ название района из предоставленного Справочника, соответствующее выбранной области",
+                            "aymak": "Село или Айыл аймагы (если есть, оставь как в документе)",
+                            "street_address": "Улица, дом, квартира (строго как в документе, например: ул. Токтогула, д. 42)",
                             "car_model": "Марка и модель авто",
                             "reg_num": "Государственный номер (все буквы и цифры слитно в верхнем регистре)",
                             "vin": "Идентификационный номер (VIN)",
@@ -180,10 +200,9 @@ if AI_READY:
                             "color": "Цвет кузова",
                             "engine_vol": "Объем двигателя (только цифры, например: 2.5 или 2000)",
                             "body_type": "Тип кузова"
-                        }
+                        }}
                         """
                         
-                        # Собираем запрос: промпт + весь список картинок
                         request_content = [prompt] + images_pil
                         response = model.generate_content(request_content)
                         
@@ -197,6 +216,23 @@ if AI_READY:
                             
                         extracted_data = json.loads(raw_json)
                         
+                        # --- УМНОЕ ЗАПОЛНЕНИЕ ВЫПАДАЮЩИХ СПИСКОВ (REGION И DISTRICT) ---
+                        ai_region = extracted_data.get("region", "")
+                        ai_district = extracted_data.get("district", "")
+                        
+                        if ai_region in KG_REGIONS:
+                            st.session_state["region_select"] = ai_region
+                            if ai_district in KG_REGIONS[ai_region]:
+                                st.session_state["district_select"] = ai_district
+                            else:
+                                st.session_state["district_select"] = KG_REGIONS[ai_region][0]
+                        
+                        # --- ЗАПОЛНЯЕМ ОСТАЛЬНЫЕ ДАННЫЕ ХОЗЯИНА ---
+                        st.session_state["customer"] = extracted_data.get("customer", "")
+                        st.session_state["aymak_input"] = extracted_data.get("aymak", "")
+                        st.session_state["street_address"] = extracted_data.get("street_address", "")
+                        
+                        # --- ЗАПОЛНЯЕМ ДАННЫЕ МАШИНЫ ---
                         st.session_state["car_model"] = extracted_data.get("car_model", "")
                         st.session_state["reg_num"] = extracted_data.get("reg_num", "")
                         st.session_state["vin"] = extracted_data.get("vin", "")
@@ -206,11 +242,11 @@ if AI_READY:
                         st.session_state["engine_vol"] = extracted_data.get("engine_vol", "")
                         st.session_state["body_type"] = extracted_data.get("body_type", "")
                         
-                        st.success("✅ Все стороны успешно проверены ИИ! Данные вставлены в форму.")
+                        st.success("✅ Все данные успешно распознаны! Опечатки в адресах исправлены, дома и улицы сохранены.")
                         st.rerun() 
                         
                     except Exception as e:
-                        st.error(f"❌ Ошибка распознавания: {e}. Проверьте качество фото и заполните поля вручную.")
+                        st.error(f"❌ Ошибка распознавания: {e}. Заполните поля вручную.")
 else:
     st.info("⚠️ Сканер техпаспорта недоступен. Добавьте GEMINI_API_KEY в Secrets.")
 
@@ -243,10 +279,15 @@ with col1:
     
     st.markdown("**Адрес регистрации**")
     c_geo1, c_geo2, c_geo3 = st.columns(3)
+    
     with c_geo1:
+        # Убираем ручной расчет индексов, Streamlit сам подхватит данные из st.session_state["region_select"]
         selected_region = st.selectbox("Область / Город:", list(KG_REGIONS.keys()), key="region_select")
+        
     with c_geo2:
+        # Аналогично подхватит st.session_state["district_select"]
         selected_district = st.selectbox("Район / Округ:", KG_REGIONS[selected_region], key="district_select")
+        
     with c_geo3:
         aymak = st.text_input("Село / Айыл аймагы:", placeholder="Например: с. Ленинское", key="aymak_input")
         
@@ -376,7 +417,7 @@ DAMAGE_TEMPLATES = {
 REPAIR_TEMPLATES = {
     "--- Выберите шаблон ---": "",
     "[Кузов] Стандартные работы": "Для восстановления требуется выполнить комплекс слесарно-кузовных, рихтовочных и малярно-окрасочных работ с применением расходных материалов, с последующей сборкой и регулировкой навесных элементов.",
-    "[Оптика] Замена фары": "Демонтаж, монтаж (замена) block-фары передней (указать сторону) в сборе.",
+    "[Оптика] Замена фары": "Демонтаж, монтаж (замена) блок-фары передней (указать сторону) в сборе.",
     "[Стекла] Лобовое стекло (база)": "Замена стекла ветрового (вклейка) с использованием комплекта однокомпонентного полиуретанового клея.",
     "[Стекла] Лобовое стекло (+датчики)": "Замена стекла ветрового (вклейка) с использованием комплекта однокомпонентного полиуретанового клея и переустановкой датчика дождя/камеры слежения.",
     "[Стекла] Боковое стекло": "Снятие обивки двери, очистка внутренней полости от осколков, замена стекла двери.",
