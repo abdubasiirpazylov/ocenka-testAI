@@ -142,26 +142,33 @@ else:
     template_source = st.file_uploader("Загрузите шаблон отчета", type="docx")
 
 # =========================================================
-# БЛОК СКАНИРОВАНИЯ ТЕХПАСПОРТА (GEMINI 2.5 FLASH)
+# БЛОК МУЛЬТИ-СКАНИРОВАНИЯ ТЕХПАСПОРТА (GEMINI 2.5 FLASH)
 # =========================================================
 if AI_READY:
-    with st.expander("🤖 Умный сканер техпаспорта (Распознавание по фото через Gemini 2.5)", expanded=True):
-        st.info("💡 Загрузите фото техпаспорта (СТС). ИИ сам прочитает и вставит данные в поля ниже.")
-        sts_image = st.file_uploader("Загрузить фото техпаспорта (JPG, PNG)", type=["jpg", "jpeg", "png"], key="sts_uploader")
+    with st.expander("🤖 Умный сканер техпаспорта (Загрузка нескольких фото)", expanded=True):
+        st.info("💡 Можно загрузить сразу несколько фото (лицевую и оборотную стороны, или все листы электронного СТС).")
         
-        if sts_image is not None:
+        # ДОБАВЛЕН ПАРАМЕТР accept_multiple_files=True
+        sts_images = st.file_uploader("Загрузить фото техпаспорта (одно или несколько)", type=["jpg", "jpeg", "png"], key="sts_uploader", accept_multiple_files=True)
+        
+        if sts_images: # Проверяем, что загружен хотя бы один файл
             if st.button("🔍 Распознать данные", type="primary"):
-                with st.spinner("Новейший движок Gemini 2.5 Flash анализирует фотографию..."):
+                with st.spinner(f"Движок Gemini 2.5 Flash изучает документы ({len(sts_images)} шт.)..."):
                     try:
-                        img = Image.open(sts_image)
-                        # ПОДКЛЮЧАЕМ STRICTLY ВЕРСИЮ 2.5 FLASH
+                        # Открываем все загруженные изображения через Pillow
+                        images_pil = []
+                        for img_file in sts_images:
+                            img_file.seek(0)
+                            images_pil.append(Image.open(img_file))
+                        
                         model = genai.GenerativeModel('gemini-2.5-flash')
                         
                         prompt = """
-                        Это фотография техпаспорта (СТС) транспортного средства Кыргызской Республики. 
-                        Твоя задача — внимательно изучить документ и извлечь следующие данные. 
+                        Это фотографии техпаспорта (СТС) транспортного средства Кыргызской Республики. 
+                        Здесь может быть несколько страниц или обе стороны документа (лицевая и оборотная).
+                        Твоя задача — внимательно изучить ВСЕ предоставленные фотографии, сопоставить информацию и извлечь следующие данные. 
                         Верни ответ СТРОГО в формате JSON, без каких-либо дополнительных слов, комментариев или markdown-разметки (никаких ```json). 
-                        Если каких-то данных не видно, верни пустую строку "".
+                        Если каких-то данных не видно ни на одной из фотографий, верни пустую строку "".
                         
                         Формат JSON:
                         {
@@ -176,7 +183,9 @@ if AI_READY:
                         }
                         """
                         
-                        response = model.generate_content([prompt, img])
+                        # Собираем запрос: промпт + весь список картинок
+                        request_content = [prompt] + images_pil
+                        response = model.generate_content(request_content)
                         
                         raw_json = response.text.strip()
                         if raw_json.startswith("```json"):
@@ -197,11 +206,11 @@ if AI_READY:
                         st.session_state["engine_vol"] = extracted_data.get("engine_vol", "")
                         st.session_state["body_type"] = extracted_data.get("body_type", "")
                         
-                        st.success("✅ Данные успешно распознаны через Gemini 2.5 и вставлены в форму!")
+                        st.success("✅ Все стороны успешно проверены ИИ! Данные вставлены в форму.")
                         st.rerun() 
                         
                     except Exception as e:
-                        st.error(f"❌ Ошибка распознавания: {e}. Заполните поля вручную.")
+                        st.error(f"❌ Ошибка распознавания: {e}. Проверьте качество фото и заполните поля вручную.")
 else:
     st.info("⚠️ Сканер техпаспорта недоступен. Добавьте GEMINI_API_KEY в Secrets.")
 
@@ -214,7 +223,6 @@ with col_hdr2:
     st.write("") 
     st.button("🧹 Очистить форму", on_click=clear_fields, use_container_width=True, type="secondary")
 
-# Загружаем обе таблицы для комплексной проверки
 df_preview = get_cached_preview()
 df_db = get_cached_db()
 
@@ -254,7 +262,6 @@ with col1:
     
     sum_num = st.text_input("Сумма ущерба цифрами:", placeholder="Например: 247300", key="sum_num")
     
-    # --- СУММА СТРОГО С МАЛЕНЬКОЙ БУКВЫ И БЕЗ СИМВОЛОВ PIPE ---
     generated_sum_words = ""
     if sum_num:
         try:
@@ -480,7 +487,6 @@ if template_source is not None:
             doc.save(buffer)
             buffer.seek(0)
             
-            # Дата отчета улетает ТОЛЬКО к шефу в Google Таблицы, в Word её нет
             row_boss = [report_num, car_model, reg_num, date_ocenki, date_otcheta, service_cost]
             row_db = [report_num, reg_num, vin, tech_passport, date_otcheta]
             
