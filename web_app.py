@@ -12,13 +12,15 @@ from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
 
-# --- ИМПОРТЫ ДЛЯ ИСКУССТВЕННОГО ИНТЕЛЛЕКТА ---
+# --- ИМПОРТЫ ДЛЯ РАБОТЫ С GOOGLE DRIVE И ИИ ---
 try:
     import google.generativeai as genai
     from PIL import Image
-    HAS_AI = True
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseUpload
+    HAS_AI_AND_DRIVE = True
 except ImportError:
-    HAS_AI = False
+    HAS_AI_AND_DRIVE = False
 
 TEMPLATE_NAME = "образец отчета.docx"
 
@@ -27,7 +29,7 @@ st.set_page_config(page_title="Генератор Отчетов - Гарант 
 # =========================================================
 # НАСТРОЙКА ИИ GEMINI (ВЕРСИЯ 2.5 FLASH)
 # =========================================================
-if HAS_AI and "GEMINI_API_KEY" in st.secrets:
+if HAS_AI_AND_DRIVE and "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     AI_READY = True
 else:
@@ -39,7 +41,7 @@ else:
 KG_REGIONS = {
     "г. Бишкек": ["Ленинский район", "Октябрьский район", "Первомайский район", "Свердловский район"],
     "г. Ош": ["Центральный", "Амир-Тимур", "Толойкон", "Керме-Тоо", "Жапалак"],
-    "Чуйская область": ["Аламудунский район", "Ысык-Атинский район", "Сокулукский район", "Московский район", "Панфиловский район", "Жайылский район", "Кеминский район", "Чуйский район", "г. Токмок"],
+    "Чуйская область": ["Аlaмудунский район", "Ысык-Атинский район", "Сокулукский район", "Московский район", "Панфиловский район", "Жайылский район", "Кеминский район", "Чуйский район", "г. Токмок"],
     "Ошская область": ["Кара-Сууский район", "Ноокатский район", "Узгенский район", "Алайский район", "Араванский район", "Чон-Алайский район", "Кара-Кулджинский район"],
     "Джалал-Абадская область": ["Сузакский район", "Базар-Коргонский район", "Ноокенский район", "Аксыйский район", "Ала-Букинский район", "Чаткальский район", "Токтогульский район", "Тогуз-Тороуский район", "г. Джалал-Абад", "г. Кара-Куль", "г. Таш-Кумыр", "г. Майлуу-Суу"],
     "Иссык-Кульская область": ["Иссык-Кульский район", "Тюпский район", "Ак-Суйский район", "Джети-Огузский район", "Тонский район", "г. Каракол", "г. Балыкчы"],
@@ -47,6 +49,36 @@ KG_REGIONS = {
     "Баткенская область": ["Баткенский район", "Кадамжайский район", "Лейлекский район", "г. Баткен", "г. Кызыл-Кыя", "г. Сулюкта"],
     "Таласская область": ["Таласский район", "Бакай-Атинский район", "Кара-Бууринский район", "Манасский район", "г. Талас"]
 }
+
+# --- ФУНКЦИЯ ЗАГРУЗКИ ФАЙЛА НА GOOGLE ДИСК ---
+def upload_to_google_drive(file_bytes, file_name):
+    if not HAS_AI_AND_DRIVE:
+        return None
+    try:
+        scopes = ["https://www.googleapis.com/auth/drive"]
+        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
+        service = build("drive", "v3", credentials=creds)
+        
+        folder_id = st.secrets.get("GOOGLE_DRIVE_FOLDER_ID", "")
+        
+        file_metadata = {
+            "name": file_name,
+            "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        }
+        if folder_id:
+            file_metadata["parents"] = [folder_id]
+            
+        media = MediaIoBaseUpload(
+            io.BytesIO(file_bytes), 
+            mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document", 
+            resumable=True
+        )
+        
+        uploaded_file = service.files().create(body=file_metadata, media_body=media, fields="id, webViewLink").execute()
+        return uploaded_file.get("webViewLink")
+    except Exception as e:
+        st.error(f"❌ Ошибка отправки файла в Google Drive Cloud: {e}")
+        return None
 
 # --- ФУНКЦИИ ДЛЯ РАБОТЫ С GOOGLE SHEETS И КЭШЕМ ---
 def get_google_sheets_client():
@@ -69,7 +101,7 @@ def append_to_google_sheets(boss_row, db_row):
             sheet_db = doc.worksheet("База_проверок")
         except gspread.exceptions.WorksheetNotFound:
             sheet_db = doc.add_worksheet(title="База_проверок", rows="1000", cols="10")
-            sheet_db.append_row(["Номер отчета", "Госномер", "VIN код", "Техпаспорт", "Дата отчета"])
+            sheet_db.append_row(["Номер отчета", "Госномер", "VIN код", "Техпаспорт", "Дата отчета", "Ссылка на файл в Облаке"])
             
         sheet_db.append_row(db_row)
         return True
@@ -124,7 +156,6 @@ def clear_fields():
     if "date_otcheta" in st.session_state:
         st.session_state["date_otcheta"] = datetime.now().strftime("%d.%m.%Y")
         
-    # Сброс умных выпадающих списков на значения по умолчанию
     if "region_select" in st.session_state:
         st.session_state["region_select"] = list(KG_REGIONS.keys())[0]
     if "district_select" in st.session_state:
@@ -165,11 +196,8 @@ if AI_READY:
                             images_pil.append(Image.open(img_file))
                         
                         model = genai.GenerativeModel('gemini-2.5-flash')
-                        
-                        # Превращаем наш словарь словарей в текст для ИИ
                         kg_regions_json = json.dumps(KG_REGIONS, ensure_ascii=False)
                         
-                        # --- ОБНОВЛЕННЫЙ ПРОМПТ С ЗАЩИТОЙ ОТ ОШИБОК И АВТОКОРРЕКТУРОЙ ---
                         prompt = f"""
                         Это фотографии техпаспорта (СТС) транспортного средства Кыргызской Республики. 
                         Здесь могут быть обе стороны документа (лицевая и оборотная) либо листы электронного варианта.
@@ -216,7 +244,6 @@ if AI_READY:
                             
                         extracted_data = json.loads(raw_json)
                         
-                        # --- УМНОЕ ЗАПОЛНЕНИЕ ВЫПАДАЮЩИХ СПИСКОВ (REGION И DISTRICT) ---
                         ai_region = extracted_data.get("region", "")
                         ai_district = extracted_data.get("district", "")
                         
@@ -227,12 +254,10 @@ if AI_READY:
                             else:
                                 st.session_state["district_select"] = KG_REGIONS[ai_region][0]
                         
-                        # --- ЗАПОЛНЯЕМ ОСТАЛЬНЫЕ ДАННЫЕ ХОЗЯИНА ---
                         st.session_state["customer"] = extracted_data.get("customer", "")
                         st.session_state["aymak_input"] = extracted_data.get("aymak", "")
                         st.session_state["street_address"] = extracted_data.get("street_address", "")
                         
-                        # --- ЗАПОЛНЯЕМ ДАННЫЕ МАШИНЫ ---
                         st.session_state["car_model"] = extracted_data.get("car_model", "")
                         st.session_state["reg_num"] = extracted_data.get("reg_num", "")
                         st.session_state["vin"] = extracted_data.get("vin", "")
@@ -248,7 +273,7 @@ if AI_READY:
                     except Exception as e:
                         st.error(f"❌ Ошибка распознавания: {e}. Заполните поля вручную.")
 else:
-    st.info("⚠️ Сканер техпаспорта недоступен. Добавьте GEMINI_API_KEY в Secrets.")
+    st.info("⚠️ Сканер техпаспорта недоступен. Проверьте requirements.txt и Secrets.")
 
 # =========================================================
 
@@ -281,13 +306,9 @@ with col1:
     c_geo1, c_geo2, c_geo3 = st.columns(3)
     
     with c_geo1:
-        # Убираем ручной расчет индексов, Streamlit сам подхватит данные из st.session_state["region_select"]
         selected_region = st.selectbox("Область / Город:", list(KG_REGIONS.keys()), key="region_select")
-        
     with c_geo2:
-        # Аналогично подхватит st.session_state["district_select"]
         selected_district = st.selectbox("Район / Округ:", KG_REGIONS[selected_region], key="district_select")
-        
     with c_geo3:
         aymak = st.text_input("Село / Айыл аймагы:", placeholder="Например: с. Ленинское", key="aymak_input")
         
@@ -526,26 +547,37 @@ if template_source is not None:
             
             buffer = io.BytesIO()
             doc.save(buffer)
-            buffer.seek(0)
+            file_bytes = buffer.getvalue()
             
-            row_boss = [report_num, car_model, reg_num, date_ocenki, date_otcheta, service_cost]
-            row_db = [report_num, reg_num, vin, tech_passport, date_otcheta]
+            safe_reg_num = reg_num.strip() if reg_num.strip() else "Без_номера"
+            file_name = f"{safe_reg_num}.docx"
+            
+            # --- АВТОМАТИЧЕСКАЯ ОТПРАВКА В GOOGLE DRIVE CLOUD ---
+            with st.spinner("Загрузка отчета в облако Google Drive..."):
+                drive_link = upload_to_google_drive(file_bytes, file_name)
+                
+            if drive_link:
+                cloud_status_text = drive_link
+                st.info(f"☁️ Файл успешно сохранен в облаке Google Drive!")
+            else:
+                cloud_status_text = "Ошибка загрузки файла в облако"
+            
+            # Добавляем ссылку на файл в отчет шефу и базу проверок
+            row_boss = [report_num, car_model, reg_num, date_ocenki, date_otcheta, service_cost, cloud_status_text]
+            row_db = [report_num, reg_num, vin, tech_passport, date_otcheta, cloud_status_text]
             
             success = append_to_google_sheets(row_boss, row_db)
             
             if success:
                 get_cached_preview.clear() 
                 get_cached_db.clear() 
-                st.success("✅ Отчет создан! Данные мгновенно улетели в Google Sheets.")
+                st.success("✅ Отчет создан! Данные и ссылка на файл мгновенно улетели в Google Таблицы.")
             else:
-                st.warning("⚠️ Отчет Word создан, но не удалось записать данные в Google Sheets. Проверьте логи.")
-            
-            safe_reg_num = reg_num.strip() if reg_num.strip() else "Без_номера"
-            file_name = f"{safe_reg_num}.docx"
+                st.warning("⚠️ Отчет Word создан, но не удалось записать данные в Google Sheets.")
             
             st.download_button(
-                label=f"📥 СКАЧАТЬ ИТОГОВЫЙ ОТЧЕТ ({file_name})",
-                data=buffer,
+                label=f"📥 СКАЧАТЬ ИТОГОВЫЙ ОТЧЕТ С ЛОКАЛЬНОГО КОМПЬЮТЕРА ({file_name})",
+                data=file_bytes,
                 file_name=file_name,
                 mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                 use_container_width=True
@@ -555,7 +587,7 @@ if template_source is not None:
             st.error(f"Произошла ошибка при обработке файла: {e}")
 
 st.sidebar.title("📊 Живой отчет для шефа")
-st.sidebar.markdown("Данные подгружаются напрямую из облака Google Sheets (только основные данные).")
+st.sidebar.markdown("Данные подгружаются напрямую из облака Google Sheets.")
 
 df_preview = get_cached_preview()
 if df_preview is not None and not df_preview.empty:
@@ -568,7 +600,7 @@ if df_preview is not None and not df_preview.empty:
     excel_buffer.seek(0)
     
     st.sidebar.download_button(
-        label="📥 Скачать ровный Excel (.xlsx)",
+        label="📥 Скачать реестр Excel (.xlsx)",
         data=excel_buffer,
         file_name=f"Отчет_шефу_{datetime.now().strftime('%d_%m_%Y')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
