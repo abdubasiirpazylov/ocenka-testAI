@@ -59,14 +59,20 @@ def upload_to_google_drive(file_bytes, file_name):
         creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
         service = build("drive", "v3", credentials=creds)
         
+        # Умный поиск ID папки (даже если он съехал в Secrets)
         folder_id = st.secrets.get("GOOGLE_DRIVE_FOLDER_ID", "")
-        
+        if not folder_id and "gcp_service_account" in st.secrets:
+            folder_id = st.secrets["gcp_service_account"].get("GOOGLE_DRIVE_FOLDER_ID", "")
+            
+        if not folder_id:
+            st.error("❌ Ошибка: Программа не видит ID папки GOOGLE_DRIVE_FOLDER_ID в настройках Secrets!")
+            return None
+            
         file_metadata = {
             "name": file_name,
+            "parents": [folder_id],
             "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         }
-        if folder_id:
-            file_metadata["parents"] = [folder_id]
             
         media = MediaIoBaseUpload(
             io.BytesIO(file_bytes), 
