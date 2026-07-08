@@ -53,19 +53,23 @@ KG_REGIONS = {
 # --- ФУНКЦИЯ ЗАГРУЗКИ ФАЙЛА НА GOOGLE ДИСК ---
 def upload_to_google_drive(file_bytes, file_name):
     if not HAS_AI_AND_DRIVE:
+        st.error("Отключен AI или Drive API")
         return None
     try:
         scopes = ["https://www.googleapis.com/auth/drive"]
         creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
         service = build("drive", "v3", credentials=creds)
         
-        # Умный поиск ID папки (даже если он съехал в Secrets)
-        folder_id = st.secrets.get("GOOGLE_DRIVE_FOLDER_ID", "")
+        folder_id = st.secrets.get("GOOGLE_DRIVE_FOLDER_ID", "").strip()
         if not folder_id and "gcp_service_account" in st.secrets:
-            folder_id = st.secrets["gcp_service_account"].get("GOOGLE_DRIVE_FOLDER_ID", "")
+            folder_id = st.secrets["gcp_service_account"].get("GOOGLE_DRIVE_FOLDER_ID", "").strip()
+            
+        # Диагностика на экран
+        st.warning(f"🔍 ДИАГНОСТИКА: Бот пытается загрузить в папку с ID: [{folder_id}]")
+        st.warning(f"🔍 ДИАГНОСТИКА: Email бота: [{creds.service_account_email}]")
             
         if not folder_id:
-            st.error("❌ Ошибка: Программа не видит ID папки GOOGLE_DRIVE_FOLDER_ID в настройках Secrets!")
+            st.error("❌ Ошибка: Программа вообще не видит ID папки в Secrets!")
             return None
             
         file_metadata = {
@@ -83,7 +87,7 @@ def upload_to_google_drive(file_bytes, file_name):
         uploaded_file = service.files().create(body=file_metadata, media_body=media, fields="id, webViewLink").execute()
         return uploaded_file.get("webViewLink")
     except Exception as e:
-        st.error(f"❌ Ошибка отправки файла в Google Drive Cloud: {e}")
+        st.error(f"❌ Подробная ошибка загрузки: {e}")
         return None
 
 # --- ФУНКЦИИ ДЛЯ РАБОТЫ С GOOGLE SHEETS И КЭШЕМ ---
