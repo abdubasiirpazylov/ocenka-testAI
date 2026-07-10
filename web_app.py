@@ -11,16 +11,15 @@ import pandas as pd
 from datetime import datetime
 import gspread
 from google.oauth2.service_account import Credentials
+import requests  # Библиотека для моментальной отправки файлов в Телеграм
 
-# --- ИМПОРТЫ ДЛЯ РАБОТЫ С GOOGLE DRIVE И ИИ ---
+# --- ИМПОРТЫ ДЛЯ ИСКУССТВЕННОГО ИНТЕЛЛЕКТА ---
 try:
     import google.generativeai as genai
     from PIL import Image
-    from googleapiclient.discovery import build
-    from googleapiclient.http import MediaIoBaseUpload
-    HAS_AI_AND_DRIVE = True
+    HAS_AI = True
 except ImportError:
-    HAS_AI_AND_DRIVE = False
+    HAS_AI = False
 
 TEMPLATE_NAME = "образец отчета.docx"
 
@@ -29,7 +28,7 @@ st.set_page_config(page_title="Генератор Отчетов - Гарант 
 # =========================================================
 # НАСТРОЙКА ИИ GEMINI (ВЕРСИЯ 2.5 FLASH)
 # =========================================================
-if HAS_AI_AND_DRIVE and "GEMINI_API_KEY" in st.secrets:
+if HAS_AI and "GEMINI_API_KEY" in st.secrets:
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     AI_READY = True
 else:
@@ -41,7 +40,7 @@ else:
 KG_REGIONS = {
     "г. Бишкек": ["Ленинский район", "Октябрьский район", "Первомайский район", "Свердловский район"],
     "г. Ош": ["Центральный", "Амир-Тимур", "Толойкон", "Керме-Тоо", "Жапалак"],
-    "Чуйская область": ["Аlaмудунский район", "Ысык-Атинский район", "Сокулукский район", "Московский район", "Панфиловский район", "Жайылский район", "Кеминский район", "Чуйский район", "г. Токмок"],
+    "Чуйская область": ["Аламудунский район", "Ысык-Атинский район", "Сокулукский район", "Московский район", "Панфиловский район", "Жайылский район", "Кеминский район", "Чуйский район", "г. Токмок"],
     "Ошская область": ["Кара-Сууский район", "Ноокатский район", "Узгенский район", "Алайский район", "Араванский район", "Чон-Алайский район", "Кара-Кулджинский район"],
     "Джалал-Абадская область": ["Сузакский район", "Базар-Коргонский район", "Ноокенский район", "Аксыйский район", "Ала-Букинский район", "Чаткальский район", "Токтогульский район", "Тогуз-Тороуский район", "г. Джалал-Абад", "г. Кара-Куль", "г. Таш-Кумыр", "г. Майлуу-Суу"],
     "Иссык-Кульская область": ["Иссык-Кульский район", "Тюпский район", "Ак-Суйский район", "Джети-Огузский район", "Тонский район", "г. Каракол", "г. Балыкчы"],
@@ -50,45 +49,42 @@ KG_REGIONS = {
     "Таласская область": ["Таласский район", "Бакай-Атинский район", "Кара-Бууринский район", "Манасский район", "г. Талас"]
 }
 
-# --- ФУНКЦИЯ ЗАГРУЗКИ ФАЙЛА НА GOOGLE ДИСК ---
+# --- ФУНКЦИЯ МОМЕНТАЛЬНОЙ ОТПРАВКИ ФАЙЛА В ТЕЛЕГРАМ ЧАТ ---
 def upload_to_google_drive(file_bytes, file_name):
-    if not HAS_AI_AND_DRIVE:
-        st.error("Отключен AI или Drive API")
-        return None
+    # Оставляем имя функции старым, чтобы не переписывать логику ниже
     try:
-        scopes = ["https://www.googleapis.com/auth/drive"]
-        creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scopes)
-        service = build("drive", "v3", credentials=creds)
+        token = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
+        chat_id = st.secrets.get("TELEGRAM_CHAT_ID", "")
         
-        folder_id = st.secrets.get("GOOGLE_DRIVE_FOLDER_ID", "").strip()
-        if not folder_id and "gcp_service_account" in st.secrets:
-            folder_id = st.secrets["gcp_service_account"].get("GOOGLE_DRIVE_FOLDER_ID", "").strip()
+        if not token or not chat_id:
+            st.error("❌ Ошибка: В Secrets не добавлены TELEGRAM_BOT_TOKEN или TELEGRAM_CHAT_ID!")
+            return "Ошибка настроек Telegram"
             
-        # Диагностика на экран
-        st.warning(f"🔍 ДИАГНОСТИКА: Бот пытается загрузить в папку с ID: [{folder_id}]")
-        st.warning(f"🔍 ДИАГНОСТИКА: Email бота: [{creds.service_account_email}]")
-            
-        if not folder_id:
-            st.error("❌ Ошибка: Программа вообще не видит ID папки в Secrets!")
-            return None
-            
-        file_metadata = {
-            "name": file_name,
-            "parents": [folder_id],
-            "mimeType": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        url = f"https://api.telegram.org/bot{token}/sendDocument"
+        
+        # Упаковываем файл в формат, который понимает Телеграм
+        files = {
+            "document": (file_name, io.BytesIO(file_bytes), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
         }
-            
-        media = MediaIoBaseUpload(
-            io.BytesIO(file_bytes), 
-            mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document", 
-            resumable=True
-        )
+        data = {
+            "chat_id": chat_id,
+            "caption": f"📄 Сгенерирован новый отчет!\n🚗 Автомобиль: {file_name.replace('.docx', '')}\n📅 Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}"
+        }
         
-        uploaded_file = service.files().create(body=file_metadata, media_body=media, fields="id, webViewLink").execute()
-        return uploaded_file.get("webViewLink")
+        # Отправляем запрос на сервера Дурова
+        response = requests.post(url, data=data, files=files)
+        res_json = response.json()
+        
+        if res_json.get("ok"):
+            st.info("🚀 Отчет успешно отправлен в ваш Telegram-чат с шефом!")
+            return "Отправлено в Telegram чат"
+        else:
+            st.error(f"❌ Ошибка Телеграма: {res_json.get('description')}")
+            return "Ошибка отправки в Telegram"
+            
     except Exception as e:
-        st.error(f"❌ Подробная ошибка загрузки: {e}")
-        return None
+        st.error(f"❌ Сбой функции отправки в Telegram: {e}")
+        return "Сбой системы"
 
 # --- ФУНКЦИИ ДЛЯ РАБОТЫ С GOOGLE SHEETS И КЭШЕМ ---
 def get_google_sheets_client():
@@ -111,7 +107,7 @@ def append_to_google_sheets(boss_row, db_row):
             sheet_db = doc.worksheet("База_проверок")
         except gspread.exceptions.WorksheetNotFound:
             sheet_db = doc.add_worksheet(title="База_проверок", rows="1000", cols="10")
-            sheet_db.append_row(["Номер отчета", "Госномер", "VIN код", "Техпаспорт", "Дата отчета", "Ссылка на файл в Облаке"])
+            sheet_db.append_row(["Номер отчета", "Госномер", "VIN код", "Техпаспорт", "Дата отчета", "Статус файла"])
             
         sheet_db.append_row(db_row)
         return True
@@ -226,7 +222,7 @@ if AI_READY:
                         Формат JSON:
                         {{
                             "customer": "ФИО Собственника/Владельца авто полностью",
-                            "region": "ТОЧНОЕ название ключа (области/города) из предоставленного Справочника",
+                            "region": "ТОЧНОЕ название ключа (обlasses/города) из предоставленного Справочника",
                             "district": "ТОЧНОЕ название района из предоставленного Справочника, соответствующее выбранной области",
                             "aymak": "Село или Айыл аймагы (если есть, оставь как в документе)",
                             "street_address": "Улица, дом, квартира (строго как в документе, например: ул. Токтогула, д. 42)",
@@ -283,7 +279,7 @@ if AI_READY:
                     except Exception as e:
                         st.error(f"❌ Ошибка распознавания: {e}. Заполните поля вручную.")
 else:
-    st.info("⚠️ Сканер техпаспорта недоступен. Проверьте requirements.txt и Secrets.")
+    st.info("⚠️ Сканер техпаспорта недоступен. Проверьте настройки Secrets.")
 
 # =========================================================
 
@@ -562,28 +558,22 @@ if template_source is not None:
             safe_reg_num = reg_num.strip() if reg_num.strip() else "Без_номера"
             file_name = f"{safe_reg_num}.docx"
             
-            # --- АВТОМАТИЧЕСКАЯ ОТПРАВКА В GOOGLE DRIVE CLOUD ---
-            with st.spinner("Загрузка отчета в облако Google Drive..."):
-                drive_link = upload_to_google_drive(file_bytes, file_name)
-                
-            if drive_link:
-                cloud_status_text = drive_link
-                st.info(f"☁️ Файл успешно сохранен в облаке Google Drive!")
-            else:
-                cloud_status_text = "Ошибка загрузки файла в облако"
+            # --- ОТПРАВЛЯЕМ ФАЙЛ В ТЕЛЕГРАМ ЧАТ С ШЕФОМ ---
+            with st.spinner("Отправка отчета в Telegram чат..."):
+                tg_status = upload_to_google_drive(file_bytes, file_name)
             
-            # Добавляем ссылку на файл в отчет шефу и базу проверок
-            row_boss = [report_num, car_model, reg_num, date_ocenki, date_otcheta, service_cost, cloud_status_text]
-            row_db = [report_num, reg_num, vin, tech_passport, date_otcheta, cloud_status_text]
+            # Добавляем данные и статус в таблицы к шефу и в базу проверок
+            row_boss = [report_num, car_model, reg_num, date_ocenki, date_otcheta, service_cost, tg_status]
+            row_db = [report_num, reg_num, vin, tech_passport, date_otcheta, tg_status]
             
             success = append_to_google_sheets(row_boss, row_db)
             
             if success:
                 get_cached_preview.clear() 
                 get_cached_db.clear() 
-                st.success("✅ Отчет создан! Данные и ссылка на файл мгновенно улетели в Google Таблицы.")
+                st.success("✅ Отчет создан! Документ улетел в Telegram, данные внесены в Google Таблицы.")
             else:
-                st.warning("⚠️ Отчет Word создан, но не удалось записать данные в Google Sheets.")
+                st.warning("⚠️ Отчет создан и отправлен в Telegram, но не удалось записать строку в Google Таблицы.")
             
             st.download_button(
                 label=f"📥 СКАЧАТЬ ИТОГОВЫЙ ОТЧЕТ С ЛОКАЛЬНОГО КОМПЬЮТЕРА ({file_name})",
