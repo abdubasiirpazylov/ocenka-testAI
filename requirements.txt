@@ -8,4 +8,4 @@ google-auth
 openpyxl
 google-generativeai
 Pillow
-google-api-python-client
+requests
