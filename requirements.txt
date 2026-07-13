@@ -2,7 +2,7 @@ streamlit
 docxtpl
 docxcompose
 num2words
-pandas
+pandas<3
 gspread
 google-auth
 openpyxl
