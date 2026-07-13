@@ -91,16 +91,29 @@ def append_to_google_sheets(boss_row, db_row):
     except:
         return False
 
+def _sanitize_for_display(df):
+    """Приводит все колонки к единому типу, чтобы pandas/pyarrow не падали
+    при смешанных типах данных (текст+числа) в одной колонке Google Sheets."""
+    if df is None or df.empty:
+        return df
+    df = df.copy()
+    for col in df.columns:
+        if df[col].dtype == object:
+            df[col] = df[col].apply(lambda x: '' if x is None else str(x))
+    return df
+
 @st.cache_data(ttl=60)
 def get_cached_preview():
     try:
-        return pd.DataFrame(get_google_sheets_client().open_by_key(st.secrets["spreadsheet_id"]).get_worksheet(0).get_all_records())
+        raw = pd.DataFrame(get_google_sheets_client().open_by_key(st.secrets["spreadsheet_id"]).get_worksheet(0).get_all_records())
+        return _sanitize_for_display(raw)
     except: return None
 
 @st.cache_data(ttl=60)
 def get_cached_db():
     try:
-        return pd.DataFrame(get_google_sheets_client().open_by_key(st.secrets["spreadsheet_id"]).worksheet("База_проверок").get_all_records())
+        raw = pd.DataFrame(get_google_sheets_client().open_by_key(st.secrets["spreadsheet_id"]).worksheet("База_проверок").get_all_records())
+        return _sanitize_for_display(raw)
     except: return pd.DataFrame()
 
 def parse_sum_from_text(text):
@@ -358,7 +371,7 @@ if AI_READY:
 
 col_hdr1, col_hdr2 = st.columns([4, 1])
 with col_hdr1: st.header("1. Ввод данных")
-with col_hdr2: st.button("🧹 Очистить форму", on_click=clear_fields, use_container_width=True)
+with col_hdr2: st.button("🧹 Очистить форму", on_click=clear_fields, width='stretch')
 
 df_preview = get_cached_preview()
 df_db = get_cached_db()
@@ -443,10 +456,10 @@ def add_to_repair():
 col_dmg, col_rep = st.columns(2)
 with col_dmg:
     st.selectbox("Конструктор осмотра:", list(DAMAGE_TEMPLATES.keys()), key="dmg_selector")
-    st.button("➕ Добавить в осмотр", on_click=add_to_damage, use_container_width=True)
+    st.button("➕ Добавить в осмотр", on_click=add_to_damage, width='stretch')
 with col_rep:
     st.selectbox("Конструктор ремонта:", list(REPAIR_TEMPLATES.keys()), key="rep_selector")
-    st.button("➕ Добавить в ремонт", on_click=add_to_repair, use_container_width=True)
+    st.button("➕ Добавить в ремонт", on_click=add_to_repair, width='stretch')
 
 damage_desc = st.text_area("Характеристика повреждений:", key="damage_text", height=150)
 repair_desc = st.text_area("Требуемый ремонт:", key="repair_text", height=150)
@@ -471,7 +484,7 @@ st.header("4. Приложение: Фотоотчет")
 photo_report_doc = st.file_uploader("Загрузите готовый Фотоотчет (.docx)", type="docx")
 
 if template_source is not None:
-    if st.button("СГЕНЕРИРОВАТЬ ИТОГОВЫЙ ОТЧЕТ", type="primary", use_container_width=True):
+    if st.button("СГЕНЕРИРОВАТЬ ИТОГОВЫЙ ОТЧЕТ", type="primary", width='stretch'):
         try:
             doc = DocxTemplate(template_source if isinstance(template_source, str) else template_source.seek(0) or template_source)
             
@@ -509,10 +522,10 @@ if template_source is not None:
                 get_cached_preview.clear(); get_cached_db.clear()
                 st.success("✅ Отчет создан, таблицы обработаны, суммы подсчитаны и файл отправлен в Telegram!")
             
-            st.download_button(f"📥 СКАЧАТЬ ОТЧЕТ ({file_name})", file_bytes, file_name, mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
+            st.download_button(f"📥 СКАЧАТЬ ОТЧЕТ ({file_name})", file_bytes, file_name, mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", width='stretch')
         except Exception as e:
             st.error(f"Произошла ошибка: {e}")
 
 st.sidebar.title("📊 Живой отчет для шефа")
 if df_preview is not None and not df_preview.empty:
-    st.sidebar.dataframe(df_preview, use_container_width=True)
+    st.sidebar.dataframe(df_preview, width='stretch')
