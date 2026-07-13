@@ -111,9 +111,6 @@ def parse_sum_from_text(text):
 def format_sum(val):
     return f"{val:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
 
-# =========================================================================
-# ПАРСЕР СМЕТЫ (Cambria, 100% Ширина, Без нумерации)
-# =========================================================================
 def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=""):
     try:
         doc_in = docx.Document(uploaded_file)
@@ -121,7 +118,6 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
         tables_found = {}
         
         def format_table_smart(tbl_element):
-            # 1. Растягиваем на 100%
             tblPr = tbl_element.find(qn('w:tblPr'))
             if tblPr is None:
                 tblPr = OxmlElement('w:tblPr')
@@ -135,33 +131,18 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             
             rows = tbl_element.findall(qn('w:tr'))
             if len(rows) > 0:
-                # 2. Форматируем ячейки (Cambria + Жирный для заголовка)
-                for row_idx, row in enumerate(rows):
-                    for tc in row.findall(qn('w:tc')):
-                        for p in tc.findall(qn('w:p')):
-                            for r in p.findall(qn('w:r')):
-                                rPr = r.find(qn('w:rPr'))
-                                if rPr is None:
-                                    rPr = OxmlElement('w:rPr')
-                                    r.insert(0, rPr)
-                                
-                                # Принудительно Cambria
-                                rFonts = rPr.find(qn('w:rFonts'))
-                                if rFonts is None:
-                                    rFonts = OxmlElement('w:rFonts')
-                                    rPr.append(rFonts)
-                                rFonts.set(qn('w:ascii'), 'Cambria')
-                                rFonts.set(qn('w:hAnsi'), 'Cambria')
-                                rFonts.set(qn('w:cs'), 'Cambria')
-                                
-                                # Жирный для первой строки
-                                if row_idx == 0:
-                                    b = rPr.find(qn('w:b'))
-                                    if b is None:
-                                        b = OxmlElement('w:b')
-                                        rPr.append(b)
+                for tc in rows[0].findall(qn('w:tc')):
+                    for p in tc.findall(qn('w:p')):
+                        for r in p.findall(qn('w:r')):
+                            rPr = r.find(qn('w:rPr'))
+                            if rPr is None:
+                                rPr = OxmlElement('w:rPr')
+                                r.insert(0, rPr)
+                            b = rPr.find(qn('w:b'))
+                            if b is None:
+                                b = OxmlElement('w:b')
+                                rPr.append(b)
                 
-                # 3. Удаляем нумерацию (всегда 2-я строка)
                 if len(rows) > 1:
                     tbl_element.remove(rows[1])
 
@@ -191,28 +172,23 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
         approval_lines = []
         overall_total = 0.0
         
-        def add_styled_run(paragraph, text, bold=False):
-            r = paragraph.add_run(text)
-            r.bold = bold
-            r.font.name = 'Cambria'
-            return r
-        
         if 'services' in tables_found:
             has_any = True
             p_title = doc_out.add_paragraph()
-            add_styled_run(p_title, "Перечень и стоимость затрат (услуг), необходимых для восстановления:", bold=True)
+            r_title = p_title.add_run("Перечень и стоимость затрат (услуг), необходимых для восстановления:")
+            r_title.bold = True
             
             copied_tbl = copy.deepcopy(tables_found['services']._element)
             copied_tbl = format_table_smart(copied_tbl)
             p_title._p.addnext(copied_tbl)
             
             p_note = doc_out.add_paragraph()
-            add_styled_run(p_note, "Примечание: ", bold=True)
+            r_note = p_note.add_run("Примечание: ")
+            r_note.bold = True
             note_text = "стоимость нормо-часа ремонтно-восстановительных работ (1500,00 сом) определена согласно анализу стоимости услуг на станциях технического обслуживания: ИП «Сергей», +996702200885; +996553535533; +996550444488, +996559885102, +996550180555; +996555495545."
             if ext_serv.strip():
                 note_text += f"\nДополнительно: {ext_serv.strip()}"
-            add_styled_run(p_note, note_text)
-            doc_out.add_paragraph() 
+            p_note.add_run(note_text + "\n")
             
             last_row_text = " ".join([cell.text for cell in tables_found['services'].rows[-1].cells])
             val = parse_sum_from_text(last_row_text)
@@ -223,19 +199,20 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
         if 'parts' in tables_found:
             has_any = True
             p_title = doc_out.add_paragraph()
-            add_styled_run(p_title, "Стоимость запасных частей:", bold=True)
+            r_title = p_title.add_run("Стоимость запасных частей:")
+            r_title.bold = True
             
             copied_tbl = copy.deepcopy(tables_found['parts']._element)
             copied_tbl = format_table_smart(copied_tbl)
             p_title._p.addnext(copied_tbl)
             
             p_note = doc_out.add_paragraph()
-            add_styled_run(p_note, "Примечание: ", bold=True)
+            r_note = p_note.add_run("Примечание: ")
+            r_note.bold = True
             note_text = "указана средняя стоимость запасных частей, поддержанных оригинальных, дубликатов на основании анализа рынка ЕАЭС.\nСсылки: в качестве информации была использована база данных ОсОО «Гарант Оценка»; интернет-ресурсы: mashina.kg, lalafo.kg; +996 551 411 711; +996 504 386 999; +996 500 524 624; +996 556 522 516; +996 707 008 833; +996 707 380 001."
             if ext_parts.strip():
                 note_text += f"\nДополнительные ссылки: {ext_parts.strip()}"
-            add_styled_run(p_note, note_text)
-            doc_out.add_paragraph()
+            p_note.add_run(note_text + "\n")
             
             last_row_text = " ".join([cell.text for cell in tables_found['parts'].rows[-1].cells])
             val = parse_sum_from_text(last_row_text)
@@ -246,18 +223,20 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
         if 'materials' in tables_found:
             has_any = True
             p_title = doc_out.add_paragraph()
-            add_styled_run(p_title, "Стоимость материалов:", bold=True)
+            r_title = p_title.add_run("Стоимость материалов:")
+            r_title.bold = True
             
             copied_tbl = copy.deepcopy(tables_found['materials']._element)
             copied_tbl = format_table_smart(copied_tbl)
             p_title._p.addnext(copied_tbl)
             
             p_note = doc_out.add_paragraph()
-            add_styled_run(p_note, "Примечание: ", bold=True)
+            r_note = p_note.add_run("Примечание: ")
+            r_note.bold = True
             note_text = "указана средняя стоимость материалов, источники конъюнктурного анализа: +996 708 707 332; +996 13 54 46; +996 550 98 77 01; +996 553 40 03 98"
             if ext_mat.strip():
                 note_text += f"\nДополнительно: {ext_mat.strip()}"
-            add_styled_run(p_note, note_text)
+            p_note.add_run(note_text + "\n")
             
             last_row_text = " ".join([cell.text for cell in tables_found['materials'].rows[-1].cells])
             val = parse_sum_from_text(last_row_text)
@@ -279,7 +258,6 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
         return buffer, approval_text
     except Exception as e:
         return None, ""
-# =========================================================================
 
 DEFAULT_DAMAGE_SUFFIX = "Дефектный акт на транспортное средство на дату оценки не предоставлялся. Оценка технического состояния произведена без учёта скрытых дефектов."
 DEFAULT_REPAIR_SUFFIX = "После завершения ремонтно-восстановительных работ необходим контроль геометрии кузова, зазоров навесных элементов и качества ЛКП. Контроль выполняется организацией, осуществляющей ремонт."
@@ -381,6 +359,7 @@ with col2:
 
 st.header("2. Описание повреждений и ремонта")
 
+# --- ВЕРНУЛ ВСЕ ШАБЛОНЫ НА МЕСТО ---
 DAMAGE_TEMPLATES = {
     "--- Выберите шаблон ---": "",
     "[Кузов] Передняя часть": "При осмотре установлены повреждения передней части кузова: деформация бампера, повреждение облицовочных элементов, смещение/деформация навесных деталей, нарушение ЛКП.",
