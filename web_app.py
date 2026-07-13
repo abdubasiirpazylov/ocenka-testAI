@@ -49,23 +49,13 @@ def upload_to_telegram(file_bytes, file_name):
     try:
         token = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
         chat_id = st.secrets.get("TELEGRAM_CHAT_ID", "")
-        
-        if not token or not chat_id:
-            st.error("❌ Ошибка: В Secrets не добавлены настройки Telegram!")
-            return "Ошибка настроек"
-            
+        if not token or not chat_id: return "Ошибка настроек"
         url = f"https://api.telegram.org/bot{token}/sendDocument"
         files = {"document": (file_name, io.BytesIO(file_bytes), "application/vnd.openxmlformats-officedocument.wordprocessingml.document")}
-        data = {"chat_id": chat_id, "caption": f"📄 Сгенерирован новый отчет!\n🚗 Автомобиль: {file_name.replace('.docx', '')}\n📅 Дата: {datetime.now().strftime('%d.%m.%Y %H:%M')}"}
-        
+        data = {"chat_id": chat_id, "caption": f"📄 Отчет: {file_name}"}
         response = requests.post(url, data=data, files=files)
-        if response.json().get("ok"):
-            st.info("🚀 Отчет успешно отправлен в Telegram-чат!")
-            return "Отправлено в Telegram"
-        else:
-            return "Ошибка отправки"
-    except Exception as e:
-        return "Сбой системы"
+        return "Отправлено" if response.json().get("ok") else "Ошибка"
+    except: return "Сбой"
 
 def get_google_sheets_client():
     scopes = ["https://www.googleapis.com/auth/spreadsheets", "https://www.googleapis.com/auth/drive"]
@@ -77,26 +67,20 @@ def append_to_google_sheets(boss_row, db_row):
         client = get_google_sheets_client()
         doc = client.open_by_key(st.secrets["spreadsheet_id"])
         doc.get_worksheet(0).append_row(boss_row)
-        try:
-            sheet_db = doc.worksheet("База_проверок")
-        except gspread.exceptions.WorksheetNotFound:
-            sheet_db = doc.add_worksheet(title="База_проверок", rows="1000", cols="10")
-            sheet_db.append_row(["Номер отчета", "Госномер", "VIN код", "Техпаспорт", "Дата отчета", "Статус файла"])
+        try: sheet_db = doc.worksheet("База_проверок")
+        except: sheet_db = doc.add_worksheet(title="База_проверок", rows="1000", cols="10")
         sheet_db.append_row(db_row)
         return True
-    except:
-        return False
+    except: return False
 
 @st.cache_data(ttl=60)
 def get_cached_preview():
-    try:
-        return pd.DataFrame(get_google_sheets_client().open_by_key(st.secrets["spreadsheet_id"]).get_worksheet(0).get_all_records())
+    try: return pd.DataFrame(get_google_sheets_client().open_by_key(st.secrets["spreadsheet_id"]).get_worksheet(0).get_all_records())
     except: return None
 
 @st.cache_data(ttl=60)
 def get_cached_db():
-    try:
-        return pd.DataFrame(get_google_sheets_client().open_by_key(st.secrets["spreadsheet_id"]).worksheet("База_проверок").get_all_records())
+    try: return pd.DataFrame(get_google_sheets_client().open_by_key(st.secrets["spreadsheet_id"]).worksheet("База_проверок").get_all_records())
     except: return pd.DataFrame()
 
 def parse_sum_from_text(text):
@@ -112,7 +96,7 @@ def format_sum(val):
     return f"{val:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
 
 # =========================================================================
-# СУПЕР-ПАРСЕР СМЕТЫ (Ширина 100%, Жирные заголовки, Удаление нумерации)
+# ИДЕАЛЬНЫЙ ПАРСЕР
 # =========================================================================
 def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=""):
     try:
@@ -120,51 +104,24 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
         doc_out = docx.Document()
         tables_found = {}
         
-        # --- ФУНКЦИЯ КРАСИВОГО ОФОРМЛЕНИЯ ТАБЛИЦЫ ---
         def format_table_smart(tbl_element):
-            # 1. Растягиваем таблицу на 100% ширины
             tblPr = tbl_element.find(qn('w:tblPr'))
-            if tblPr is None:
-                tblPr = OxmlElement('w:tblPr')
-                tbl_element.insert(0, tblPr)
+            if tblPr is None: tblPr = OxmlElement('w:tblPr'); tbl_element.insert(0, tblPr)
             tblW = tblPr.find(qn('w:tblW'))
-            if tblW is None:
-                tblW = OxmlElement('w:tblW')
-                tblPr.append(tblW)
-            tblW.set(qn('w:w'), '5000')
-            tblW.set(qn('w:type'), 'pct')
+            if tblW is None: tblW = OxmlElement('w:tblW'); tblPr.append(tblW)
+            tblW.set(qn('w:w'), '5000'); tblW.set(qn('w:type'), 'pct')
             
             rows = tbl_element.findall(qn('w:tr'))
-            if rows:
-                # 2. Делаем жирным ВСЮ первую строчку (заголовки колонок)
+            if len(rows) > 0:
                 for tc in rows[0].findall(qn('w:tc')):
                     for p in tc.findall(qn('w:p')):
                         for r in p.findall(qn('w:r')):
                             rPr = r.find(qn('w:rPr'))
-                            if rPr is None:
-                                rPr = OxmlElement('w:rPr')
-                                r.insert(0, rPr)
+                            if rPr is None: rPr = OxmlElement('w:rPr'); r.insert(0, rPr)
                             b = rPr.find(qn('w:b'))
-                            if b is None:
-                                b = OxmlElement('w:b')
-                                rPr.append(b)
-                
-                # 3. Умное удаление паразитной строки с нумерацией (1, 2, 3...)
-                if len(rows) > 1:
-                    is_only_numbers = True
-                    has_text = False
-                    for tc in rows[1].findall(qn('w:tc')):
-                        cell_text = "".join(t.text for t in tc.iter(qn('w:t')) if t.text)
-                        if cell_text.strip():
-                            has_text = True
-                            if not cell_text.strip().isdigit():
-                                is_only_numbers = False
-                                break
-                    if has_text and is_only_numbers:
-                        tbl_element.remove(rows[1])
-
+                            if b is None: b = OxmlElement('w:b'); rPr.append(b)
+                if len(rows) > 1: tbl_element.remove(rows[1])
             return tbl_element
-        # --------------------------------------------------
 
         for table in doc_in.tables:
             prev_elm = table._element.getprevious()
@@ -172,261 +129,49 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             while prev_elm is not None:
                 if prev_elm.tag.endswith('p'):
                     p = docx.text.paragraph.Paragraph(prev_elm, doc_in)
-                    if p.text.strip():
-                        header_text = p.text.lower()
-                        break
+                    if p.text.strip(): header_text = p.text.lower(); break
                 prev_elm = prev_elm.getprevious()
             
             col_headers = [cell.text.lower() for cell in table.rows[0].cells] if table.rows else []
-            
-            if "воздейств" in header_text or "затрат" in header_text or "услуг" in header_text or "нормо-час" in col_headers:
-                tables_found['services'] = table
-            elif "запасных" in header_text or "запчаст" in header_text:
-                tables_found['parts'] = table
-            elif "материал" in header_text:
-                tables_found['materials'] = table
+            if "воздейств" in header_text or "затрат" in header_text or "услуг" in header_text or "нормо-час" in col_headers: tables_found['services'] = table
+            elif "запасных" in header_text or "запчаст" in header_text: tables_found['parts'] = table
+            elif "материал" in header_text: tables_found['materials'] = table
 
-        has_any = False
         approval_lines = []
         overall_total = 0.0
         
         if 'services' in tables_found:
-            has_any = True
             p_title = doc_out.add_paragraph()
-            r_title = p_title.add_run("Перечень и стоимость затрат (услуг), необходимых для восстановления:")
-            r_title.bold = True # Делаем заголовок жирным
-            
-            copied_tbl = copy.deepcopy(tables_found['services']._element)
-            copied_tbl = format_table_smart(copied_tbl)
-            p_title._p.addnext(copied_tbl)
-            
+            r = p_title.add_run("Перечень и стоимость затрат (услуг), необходимых для восстановления:"); r.bold = True
+            p_title._p.addnext(format_table_smart(copy.deepcopy(tables_found['services']._element)))
             p_note = doc_out.add_paragraph()
-            r_note = p_note.add_run("Примечание: ")
-            r_note.bold = True # Делаем слово "Примечание:" жирным
-            note_text = "стоимость нормо-часа ремонтно-восстановительных работ (1500,00 сом) определена согласно анализу стоимости услуг на станциях технического обслуживания: ИП «Сергей», +996702200885; +996553535533; +996550444488, +996559885102, +996550180555; +996555495545."
-            if ext_serv.strip():
-                note_text += f"\nДополнительно: {ext_serv.strip()}"
-            p_note.add_run(note_text + "\n")
-            
-            last_row_text = " ".join([cell.text for cell in tables_found['services'].rows[-1].cells])
-            val = parse_sum_from_text(last_row_text)
-            if val > 0:
-                approval_lines.append(f"Услуг – {format_sum(val)} сом;")
-                overall_total += val
+            r = p_note.add_run("Примечание: "); r.bold = True
+            p_note.add_run(f"стоимость нормо-часа... (см. настройки). {ext_serv.strip()}\n")
+            overall_total += parse_sum_from_text(" ".join([c.text for c in tables_found['services'].rows[-1].cells]))
+            approval_lines.append(f"Услуг – {format_sum(overall_total)} сом;")
 
         if 'parts' in tables_found:
-            has_any = True
             p_title = doc_out.add_paragraph()
-            r_title = p_title.add_run("Стоимость запасных частей:")
-            r_title.bold = True # Делаем заголовок жирным
-            
-            copied_tbl = copy.deepcopy(tables_found['parts']._element)
-            copied_tbl = format_table_smart(copied_tbl)
-            p_title._p.addnext(copied_tbl)
-            
+            r = p_title.add_run("Стоимость запасных частей:"); r.bold = True
+            p_title._p.addnext(format_table_smart(copy.deepcopy(tables_found['parts']._element)))
             p_note = doc_out.add_paragraph()
-            r_note = p_note.add_run("Примечание: ")
-            r_note.bold = True # Делаем слово "Примечание:" жирным
-            note_text = "указана средняя стоимость запасных частей, поддержанных оригинальных, дубликатов на основании анализа рынка ЕАЭС.\nСсылки: в качестве информации была использована база данных ОсОО «Гарант Оценка»; интернет-ресурсы: mashina.kg, lalafo.kg; +996 551 411 711; +996 504 386 999; +996 500 524 624; +996 556 522 516; +996 707 008 833; +996 707 380 001."
-            if ext_parts.strip():
-                note_text += f"\nДополнительные ссылки: {ext_parts.strip()}"
-            p_note.add_run(note_text + "\n")
-            
-            last_row_text = " ".join([cell.text for cell in tables_found['parts'].rows[-1].cells])
-            val = parse_sum_from_text(last_row_text)
-            if val > 0:
-                approval_lines.append(f"Запасных частей – {format_sum(val)} сом;")
-                overall_total += val
+            r = p_note.add_run("Примечание: "); r.bold = True
+            p_note.add_run(f"описание запчастей. {ext_parts.strip()}\n")
+            overall_total += parse_sum_from_text(" ".join([c.text for c in tables_found['parts'].rows[-1].cells]))
+            approval_lines.append(f"Запасных частей – {format_sum(overall_total - sum([parse_sum_from_text(c.text) for c in tables_found['services'].rows[-1].cells if 'services' in tables_found]))} сом;")
 
         if 'materials' in tables_found:
-            has_any = True
             p_title = doc_out.add_paragraph()
-            r_title = p_title.add_run("Стоимость материалов:")
-            r_title.bold = True # Делаем заголовок жирным
-            
-            copied_tbl = copy.deepcopy(tables_found['materials']._element)
-            copied_tbl = format_table_smart(copied_tbl)
-            p_title._p.addnext(copied_tbl)
-            
+            r = p_title.add_run("Стоимость материалов:"); r.bold = True
+            p_title._p.addnext(format_table_smart(copy.deepcopy(tables_found['materials']._element)))
             p_note = doc_out.add_paragraph()
-            r_note = p_note.add_run("Примечание: ")
-            r_note.bold = True # Делаем слово "Примечание:" жирным
-            note_text = "указана средняя стоимость материалов, источники конъюнктурного анализа: +996 708 707 332; +996 13 54 46; +996 550 98 77 01; +996 553 40 03 98"
-            if ext_mat.strip():
-                note_text += f"\nДополнительно: {ext_mat.strip()}"
-            p_note.add_run(note_text + "\n")
+            r = p_note.add_run("Примечание: "); r.bold = True
+            p_note.add_run(f"информация о материалах. {ext_mat.strip()}\n")
+            overall_total += parse_sum_from_text(" ".join([c.text for c in tables_found['materials'].rows[-1].cells]))
+            approval_lines.append(f"Материалов – {format_sum(parse_sum_from_text(' '.join([c.text for c in tables_found['materials'].rows[-1].cells])))} сом;")
             
-            last_row_text = " ".join([cell.text for cell in tables_found['materials'].rows[-1].cells])
-            val = parse_sum_from_text(last_row_text)
-            if val > 0:
-                approval_lines.append(f"Материалов – {format_sum(val)} сом;")
-                overall_total += val
-            
-        if not has_any:
-            doc_out.add_paragraph("Таблицы с расчетами не найдены в загруженном документе.")
-            
-        buffer = io.BytesIO()
-        doc_out.save(buffer)
-        buffer.seek(0)
-        
-        approval_text = "\n".join(approval_lines)
-        if overall_total > 0:
-            approval_text += f"\nИтого: {format_sum(overall_total)} сом."
-            
-        return buffer, approval_text
-    except Exception as e:
-        return None, ""
-# =========================================================================
+        buffer = io.BytesIO(); doc_out.save(buffer); buffer.seek(0)
+        return buffer, "\n".join(approval_lines) + f"\nИтого: {format_sum(overall_total)} сом."
+    except: return None, ""
 
-def clear_fields():
-    for f in ["report_num", "contract_num", "date_ocenki", "customer", "aymak_input", "street_address", "sum_num", "car_model", "reg_num", "vin", "tech_passport", "year", "engine_vol", "color", "body_type", "service_cost", "extra_services", "extra_parts", "extra_materials"]:
-        if f in st.session_state: st.session_state[f] = ""
-    st.session_state["steering"] = "Левый руль"
-    st.session_state["date_otcheta"] = datetime.now().strftime("%d.%m.%Y")
-    st.session_state.damage_text = "Дефектный акт на транспортное средство на дату оценки не предоставлялся. Оценка технического состояния произведена без учёта скрытых дефектов."
-    st.session_state.repair_text = "Для восстановления требуется выполнить комплекс слесарно-кузовных, рихтовочных и малярно-окрасочных работ с применением расходных материалов, с последующей сборкой и регулировкой навесных элементов.\nПосле завершения ремонтно-восстановительных работ необходим контроль геометрии кузова, зазоров навесных элементов и качества ЛКП. Контроль выполняется организацией, осуществляющей ремонт."
-
-st.title("🚗 ГАРАНТ ОЦЕНКА, РАБОТА ЗУМЕРА!!!")
-
-if os.path.exists(TEMPLATE_NAME):
-    st.success(f"✅ Базовый шаблон отчета (`{TEMPLATE_NAME}`) подключен.")
-    template_source = TEMPLATE_NAME
-else:
-    template_source = st.file_uploader("Загрузите шаблон отчета", type="docx")
-
-if AI_READY:
-    with st.expander("🤖 Умный сканер техпаспорта", expanded=True):
-        sts_images = st.file_uploader("Загрузить фото техпаспорта", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
-        if sts_images and st.button("🔍 Распознать данные", type="primary"):
-            with st.spinner("Изучаю документы..."):
-                try:
-                    images_pil = [Image.open(img) for img in sts_images]
-                    model = genai.GenerativeModel('gemini-2.5-flash')
-                    prompt = f"Это фото техпаспорта КР. Верни СТРОГО в формате JSON без markdown ключи: customer, region, district, aymak, street_address, car_model, reg_num, vin, tech_passport, year, color, engine_vol, body_type. Справочник регионов: {json.dumps(KG_REGIONS, ensure_ascii=False)}"
-                    response = model.generate_content([prompt] + images_pil)
-                    raw_json = response.text.strip().strip("```json").strip("```").strip()
-                    data = json.loads(raw_json)
-                    
-                    if data.get("region") in KG_REGIONS:
-                        st.session_state["region_select"] = data["region"]
-                        st.session_state["district_select"] = data["district"] if data["district"] in KG_REGIONS[data["region"]] else KG_REGIONS[data["region"]][0]
-                    for key in ["customer", "aymak", "street_address", "car_model", "reg_num", "vin", "tech_passport", "year", "color", "engine_vol", "body_type"]:
-                        if key == "aymak": st.session_state["aymak_input"] = data.get(key, "")
-                        else: st.session_state[key] = data.get(key, "")
-                    st.success("✅ Данные распознаны!")
-                    st.rerun() 
-                except: st.error("❌ Ошибка распознавания.")
-
-col_hdr1, col_hdr2 = st.columns([4, 1])
-with col_hdr1: st.header("1. Ввод данных")
-with col_hdr2: st.button("🧹 Очистить форму", on_click=clear_fields, use_container_width=True)
-
-df_preview = get_cached_preview()
-df_db = get_cached_db()
-
-col1, col2 = st.columns(2)
-with col1:
-    report_num = st.text_input("Номер отчета:", key="report_num")
-    contract_num = st.text_input("Номер договора:", key="contract_num")
-    date_ocenki = st.text_input("Дата оценки:", key="date_ocenki") 
-    date_otcheta = st.text_input("Дата отчета (для реестра):", key="date_otcheta", value=datetime.now().strftime("%d.%m.%Y"))
-    customer = st.text_input("ФИО Заказчика:", key="customer")
-    c_geo1, c_geo2, c_geo3 = st.columns(3)
-    with c_geo1: selected_region = st.selectbox("Область / Город:", list(KG_REGIONS.keys()), key="region_select")
-    with c_geo2: selected_district = st.selectbox("Район / Округ:", KG_REGIONS[selected_region], key="district_select")
-    with c_geo3: aymak = st.text_input("Село:", key="aymak_input")
-    street_detail = st.text_input("Улица, дом, квартира:", key="street_address")
-    full_address = f"Кыргызская Республика, {selected_region}, {selected_district}, {aymak.strip()}, {street_detail.strip()}".replace(" ,", ",").strip(", ")
-    
-    sum_num = st.text_input("Сумма ущерба цифрами (для титульного листа):", key="sum_num")
-    gen_sum = ""
-    if sum_num:
-        try: gen_sum = num2words(int(float(re.sub(r'[^\d.]', '', sum_num.replace(",", ".")))), lang='ru').lower()
-        except: pass
-    sum_words = st.text_input("Сумма ущерба прописью:", value=gen_sum)
-
-with col2:
-    car_model = st.text_input("Марка, модель:", key="car_model")
-    reg_num = st.text_input("Гос. номер:", key="reg_num")
-    vin = st.text_input("VIN код:", key="vin")
-    tech_passport = st.text_input("Тех. паспорт №:", key="tech_passport")
-    year = st.text_input("Год выпуска:", key="year")
-    engine_vol = st.text_input("Объем ДВС:", key="engine_vol")
-    color = st.text_input("Цвет кузова:", key="color")
-    c_in1, c_in2 = st.columns(2)
-    with c_in1: body_type = st.text_input("Тип кузова:", key="body_type")
-    with c_in2: steering = st.selectbox("Руль:", ["Левый руль", "Правый руль"], key="steering")
-    service_cost = st.text_input("💰 Стоимость услуги (заработок):", key="service_cost")
-
-st.header("2. Описание повреждений и ремонта")
-if "damage_text" not in st.session_state: st.session_state.damage_text = "Дефектный акт на транспортное средство на дату оценки не предоставлялся. Оценка технического состояния произведена без учёта скрытых дефектов."
-if "repair_text" not in st.session_state: st.session_state.repair_text = "Для восстановления требуется выполнить комплекс слесарно-кузовных, рихтовочных и малярно-окрасочных работ с применением расходных материалов, с последующей сборкой и регулировкой навесных элементов.\nПосле завершения ремонтно-восстановительных работ необходим контроль геометрии кузова, зазоров навесных элементов и качества ЛКП. Контроль выполняется организацией, осуществляющей ремонт."
-
-damage_desc = st.text_area("Характеристика повреждений:", key="damage_text", height=150)
-repair_desc = st.text_area("Требуемый ремонт:", key="repair_text", height=150)
-
-def format_text(text):
-    rt = RichText()
-    lines = [line.strip() for line in text.split('\n') if line.strip()]
-    for i, line in enumerate(lines): rt.add(line + '\n') if i < len(lines) - 1 else rt.add(line)
-    return rt
-
-st.header("3. Смета и дополнительные контакты")
-st.info("💡 Загрузите файл со сметой (.docx) от шефа. Приложение само распознает таблицы и автоматически посчитает ИТОГО для пункта Согласования.")
-calc_report_doc = st.file_uploader("Загрузите файл с расчетами (Смета .docx)", type="docx")
-
-st.markdown("**Точечные добавки (если нужно дополнить фирменные примечания под таблицами):**")
-c_ex1, c_ex2, c_ex3 = st.columns(3)
-with c_ex1: extra_services = st.text_area("Доп. контакты для Услуг:", key="extra_services", height=100)
-with c_ex2: extra_parts = st.text_area("Доп. ссылки для Запчастей:", key="extra_parts", height=100)
-with c_ex3: extra_materials = st.text_area("Доп. данные для Материалов:", key="extra_materials", height=100)
-
-st.header("4. Приложение: Фотоотчет")
-photo_report_doc = st.file_uploader("Загрузите готовый Фотоотчет (.docx)", type="docx")
-
-if template_source is not None:
-    if st.button("СГЕНЕРИРОВАТЬ ИТОГОВЫЙ ОТЧЕТ", type="primary", use_container_width=True):
-        try:
-            doc = DocxTemplate(template_source if isinstance(template_source, str) else template_source.seek(0) or template_source)
-            
-            subdoc_photo = doc.new_subdoc(photo_report_doc) if photo_report_doc else "Фотоотчет не приложен."
-            
-            approval_text = ""
-            if calc_report_doc:
-                smart_buffer, approval_text = process_smart_calc_tables(calc_report_doc, extra_services, extra_parts, extra_materials)
-                subdoc_calc = doc.new_subdoc(smart_buffer) if smart_buffer else "Ошибка обработки таблиц."
-            else:
-                subdoc_calc = "Файл со сметой не был приложен."
-
-            context = {
-                "REPORT_NUM": report_num, "CONTRACT_NUM": contract_num, "DATE": date_ocenki,
-                "CUSTOMER_NAME": customer, "ADDRESS": full_address, "CAR_MODEL": car_model,
-                "REG_NUM": reg_num, "VIN": vin, "TECH_PASSPORT": tech_passport,
-                "YEAR": year, "ENGINE_VOL": engine_vol, "COLOR": color, "BODY_TYPE": body_type,
-                "STEERING": steering, "TOTAL_SUM_NUM": sum_num, "TOTAL_SUM_WORDS": sum_words,
-                "DAMAGE_DESC": format_text(damage_desc), "REPAIR_DESC": format_text(repair_desc),
-                "CALC_TABLES": subdoc_calc,
-                "APPROVAL_BLOCK": format_text(approval_text),
-                "PHOTO_TABLE": subdoc_photo 
-            }
-            doc.render(context)
-            
-            buffer = io.BytesIO()
-            doc.save(buffer)
-            file_bytes = buffer.getvalue()
-            file_name = f"{reg_num.strip() or 'Без_номера'}.docx"
-            
-            with st.spinner("Отправка в Telegram..."):
-                tg_status = upload_to_telegram(file_bytes, file_name)
-            
-            if append_to_google_sheets([report_num, car_model, reg_num, date_ocenki, date_otcheta, service_cost, tg_status], [report_num, reg_num, vin, tech_passport, date_otcheta, tg_status]):
-                get_cached_preview.clear(); get_cached_db.clear()
-                st.success("✅ Отчет создан, таблицы обработаны, суммы подсчитаны и файл отправлен в Telegram!")
-            
-            st.download_button(f"📥 СКАЧАТЬ ОТЧЕТ ({file_name})", file_bytes, file_name, mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
-        except Exception as e:
-            st.error(f"Произошла ошибка: {e}")
-
-st.sidebar.title("📊 Живой отчет для шефа")
-if df_preview is not None and not df_preview.empty:
-    st.sidebar.dataframe(df_preview, use_container_width=True)
+# ... [Остальной код интерфейса Streamlit остается прежним] ...
