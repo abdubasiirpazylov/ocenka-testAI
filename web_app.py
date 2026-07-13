@@ -528,4 +528,14 @@ if template_source is not None:
 
 st.sidebar.title("📊 Живой отчет для шефа")
 if df_preview is not None and not df_preview.empty:
-    st.sidebar.dataframe(df_preview, width='stretch')
+    # Рендерим таблицу вручную через HTML, минуя pyarrow —
+    # на сервере (pyarrow 25 + Python 3.14) st.dataframe/st.table
+    # может падать с сегфолтом при смешанных типах данных из Google Sheets.
+    try:
+        html_table = df_preview.to_html(index=False, escape=True, na_rep="")
+        st.sidebar.markdown(
+            f'<div style="overflow-x:auto; font-size:13px;">{html_table}</div>',
+            unsafe_allow_html=True
+        )
+    except Exception as e:
+        st.sidebar.error(f"⚠️ Не удалось отобразить таблицу: {e}")
