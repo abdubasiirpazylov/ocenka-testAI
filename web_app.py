@@ -17,7 +17,7 @@ import docx
 import copy
 
 try:
-    from google import genai
+    import google.generativeai as genai
     from PIL import Image
     HAS_AI = True
 except ImportError:
@@ -28,12 +28,8 @@ TEMPLATE_NAME = "образец отчета.docx"
 st.set_page_config(page_title="Генератор Отчетов - Гарант Оценка", layout="wide")
 
 if HAS_AI and "GEMINI_API_KEY" in st.secrets:
-    try:
-        gemini_client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-        AI_READY = True
-    except Exception as e:
-        AI_READY = False
-        st.sidebar.error(f"⚠️ ИИ-сканер недоступен: {e}")
+    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+    AI_READY = True
 else:
     AI_READY = False
 
@@ -91,29 +87,16 @@ def append_to_google_sheets(boss_row, db_row):
     except:
         return False
 
-def _sanitize_for_display(df):
-    """Приводит все колонки к единому типу, чтобы pandas/pyarrow не падали
-    при смешанных типах данных (текст+числа) в одной колонке Google Sheets."""
-    if df is None or df.empty:
-        return df
-    df = df.copy()
-    for col in df.columns:
-        if df[col].dtype == object:
-            df[col] = df[col].apply(lambda x: '' if x is None else str(x))
-    return df
-
 @st.cache_data(ttl=60)
 def get_cached_preview():
     try:
-        raw = pd.DataFrame(get_google_sheets_client().open_by_key(st.secrets["spreadsheet_id"]).get_worksheet(0).get_all_records())
-        return _sanitize_for_display(raw)
+        return pd.DataFrame(get_google_sheets_client().open_by_key(st.secrets["spreadsheet_id"]).get_worksheet(0).get_all_records())
     except: return None
 
 @st.cache_data(ttl=60)
 def get_cached_db():
     try:
-        raw = pd.DataFrame(get_google_sheets_client().open_by_key(st.secrets["spreadsheet_id"]).worksheet("База_проверок").get_all_records())
-        return _sanitize_for_display(raw)
+        return pd.DataFrame(get_google_sheets_client().open_by_key(st.secrets["spreadsheet_id"]).worksheet("База_проверок").get_all_records())
     except: return pd.DataFrame()
 
 def parse_sum_from_text(text):
@@ -148,44 +131,22 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             
             rows = tbl_element.findall(qn('w:tr'))
             if len(rows) > 0:
-                for row_idx, tr in enumerate(rows):
-                    for tc in tr.findall(qn('w:tc')):
-                        for p in tc.findall(qn('w:p')):
-                            for r in p.findall(qn('w:r')):
-                                rPr = r.find(qn('w:rPr'))
-                                if rPr is None:
-                                    rPr = OxmlElement('w:rPr')
-                                    r.insert(0, rPr)
-
-                                # Шрифт Cambria для ВСЕХ строк таблицы (не только заголовка)
-                                rFonts = rPr.find(qn('w:rFonts'))
-                                if rFonts is None:
-                                    rFonts = OxmlElement('w:rFonts')
-                                    rPr.append(rFonts)
-                                for attr in ('w:ascii', 'w:hAnsi', 'w:cs', 'w:eastAsia'):
-                                    rFonts.set(qn(attr), 'Cambria')
-
-                                # Жирный шрифт только для строки заголовка (первая строка)
-                                if row_idx == 0:
-                                    b = rPr.find(qn('w:b'))
-                                    if b is None:
-                                        b = OxmlElement('w:b')
-                                        rPr.append(b)
+                for tc in rows[0].findall(qn('w:tc')):
+                    for p in tc.findall(qn('w:p')):
+                        for r in p.findall(qn('w:r')):
+                            rPr = r.find(qn('w:rPr'))
+                            if rPr is None:
+                                rPr = OxmlElement('w:rPr')
+                                r.insert(0, rPr)
+                            b = rPr.find(qn('w:b'))
+                            if b is None:
+                                b = OxmlElement('w:b')
+                                rPr.append(b)
                 
                 if len(rows) > 1:
                     tbl_element.remove(rows[1])
 
             return tbl_element
-
-        def apply_cambria(run):
-            run.font.name = 'Cambria'
-            rPr = run._element.get_or_add_rPr()
-            rFonts = rPr.find(qn('w:rFonts'))
-            if rFonts is None:
-                rFonts = OxmlElement('w:rFonts')
-                rPr.append(rFonts)
-            for attr in ('w:ascii', 'w:hAnsi', 'w:cs', 'w:eastAsia'):
-                rFonts.set(qn(attr), 'Cambria')
 
         for table in doc_in.tables:
             prev_elm = table._element.getprevious()
@@ -216,7 +177,6 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             p_title = doc_out.add_paragraph()
             r_title = p_title.add_run("Перечень и стоимость затрат (услуг), необходимых для восстановления:")
             r_title.bold = True
-            apply_cambria(r_title)
             
             copied_tbl = copy.deepcopy(tables_found['services']._element)
             copied_tbl = format_table_smart(copied_tbl)
@@ -225,12 +185,10 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             p_note = doc_out.add_paragraph()
             r_note = p_note.add_run("Примечание: ")
             r_note.bold = True
-            apply_cambria(r_note)
             note_text = "стоимость нормо-часа ремонтно-восстановительных работ (1500,00 сом) определена согласно анализу стоимости услуг на станциях технического обслуживания: ИП «Сергей», +996702200885; +996553535533; +996550444488, +996559885102, +996550180555; +996555495545."
             if ext_serv.strip():
                 note_text += f"\nДополнительно: {ext_serv.strip()}"
-            r_note_body = p_note.add_run(note_text + "\n")
-            apply_cambria(r_note_body)
+            p_note.add_run(note_text + "\n")
             
             last_row_text = " ".join([cell.text for cell in tables_found['services'].rows[-1].cells])
             val = parse_sum_from_text(last_row_text)
@@ -243,7 +201,6 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             p_title = doc_out.add_paragraph()
             r_title = p_title.add_run("Стоимость запасных частей:")
             r_title.bold = True
-            apply_cambria(r_title)
             
             copied_tbl = copy.deepcopy(tables_found['parts']._element)
             copied_tbl = format_table_smart(copied_tbl)
@@ -252,12 +209,10 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             p_note = doc_out.add_paragraph()
             r_note = p_note.add_run("Примечание: ")
             r_note.bold = True
-            apply_cambria(r_note)
             note_text = "указана средняя стоимость запасных частей, поддержанных оригинальных, дубликатов на основании анализа рынка ЕАЭС.\nСсылки: в качестве информации была использована база данных ОсОО «Гарант Оценка»; интернет-ресурсы: mashina.kg, lalafo.kg; +996 551 411 711; +996 504 386 999; +996 500 524 624; +996 556 522 516; +996 707 008 833; +996 707 380 001."
             if ext_parts.strip():
                 note_text += f"\nДополнительные ссылки: {ext_parts.strip()}"
-            r_note_body = p_note.add_run(note_text + "\n")
-            apply_cambria(r_note_body)
+            p_note.add_run(note_text + "\n")
             
             last_row_text = " ".join([cell.text for cell in tables_found['parts'].rows[-1].cells])
             val = parse_sum_from_text(last_row_text)
@@ -270,7 +225,6 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             p_title = doc_out.add_paragraph()
             r_title = p_title.add_run("Стоимость материалов:")
             r_title.bold = True
-            apply_cambria(r_title)
             
             copied_tbl = copy.deepcopy(tables_found['materials']._element)
             copied_tbl = format_table_smart(copied_tbl)
@@ -279,12 +233,10 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             p_note = doc_out.add_paragraph()
             r_note = p_note.add_run("Примечание: ")
             r_note.bold = True
-            apply_cambria(r_note)
             note_text = "указана средняя стоимость материалов, источники конъюнктурного анализа: +996 708 707 332; +996 13 54 46; +996 550 98 77 01; +996 553 40 03 98"
             if ext_mat.strip():
                 note_text += f"\nДополнительно: {ext_mat.strip()}"
-            r_note_body = p_note.add_run(note_text + "\n")
-            apply_cambria(r_note_body)
+            p_note.add_run(note_text + "\n")
             
             last_row_text = " ".join([cell.text for cell in tables_found['materials'].rows[-1].cells])
             val = parse_sum_from_text(last_row_text)
@@ -305,7 +257,6 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             
         return buffer, approval_text
     except Exception as e:
-        st.error(f"❌ Ошибка обработки таблиц сметы: {e}")
         return None, ""
 
 DEFAULT_DAMAGE_SUFFIX = "Дефектный акт на транспортное средство на дату оценки не предоставлялся. Оценка технического состояния произведена без учёта скрытых дефектов."
@@ -349,29 +300,25 @@ if AI_READY:
             with st.spinner("Изучаю документы..."):
                 try:
                     images_pil = [Image.open(img) for img in sts_images]
+                    model = genai.GenerativeModel('gemini-2.5-flash')
                     prompt = f"Это фото техпаспорта КР. Верни СТРОГО в формате JSON без markdown ключи: customer, region, district, aymak, street_address, car_model, reg_num, vin, tech_passport, year, color, engine_vol, body_type. Справочник регионов: {json.dumps(KG_REGIONS, ensure_ascii=False)}"
-                    response = gemini_client.models.generate_content(
-                        model='gemini-2.5-flash',
-                        contents=[prompt] + images_pil
-                    )
-                    raw_json = re.sub(r'^```json\s*|\s*```$', '', response.text.strip(), flags=re.MULTILINE).strip()
+                    response = model.generate_content([prompt] + images_pil)
+                    raw_json = response.text.strip().strip("```json").strip("```").strip()
                     data = json.loads(raw_json)
                     
                     if data.get("region") in KG_REGIONS:
                         st.session_state["region_select"] = data["region"]
-                        district_val = data.get("district", "")
-                        st.session_state["district_select"] = district_val if district_val in KG_REGIONS[data["region"]] else KG_REGIONS[data["region"]][0]
+                        st.session_state["district_select"] = data["district"] if data["district"] in KG_REGIONS[data["region"]] else KG_REGIONS[data["region"]][0]
                     for key in ["customer", "aymak", "street_address", "car_model", "reg_num", "vin", "tech_passport", "year", "color", "engine_vol", "body_type"]:
                         if key == "aymak": st.session_state["aymak_input"] = data.get(key, "")
                         else: st.session_state[key] = data.get(key, "")
                     st.success("✅ Данные распознаны!")
                     st.rerun() 
-                except Exception as e:
-                    st.error(f"❌ Ошибка распознавания: {e}")
+                except: st.error("❌ Ошибка распознавания.")
 
 col_hdr1, col_hdr2 = st.columns([4, 1])
 with col_hdr1: st.header("1. Ввод данных")
-with col_hdr2: st.button("🧹 Очистить форму", on_click=clear_fields, width='stretch')
+with col_hdr2: st.button("🧹 Очистить форму", on_click=clear_fields, use_container_width=True)
 
 df_preview = get_cached_preview()
 df_db = get_cached_db()
@@ -456,10 +403,10 @@ def add_to_repair():
 col_dmg, col_rep = st.columns(2)
 with col_dmg:
     st.selectbox("Конструктор осмотра:", list(DAMAGE_TEMPLATES.keys()), key="dmg_selector")
-    st.button("➕ Добавить в осмотр", on_click=add_to_damage, width='stretch')
+    st.button("➕ Добавить в осмотр", on_click=add_to_damage, use_container_width=True)
 with col_rep:
     st.selectbox("Конструктор ремонта:", list(REPAIR_TEMPLATES.keys()), key="rep_selector")
-    st.button("➕ Добавить в ремонт", on_click=add_to_repair, width='stretch')
+    st.button("➕ Добавить в ремонт", on_click=add_to_repair, use_container_width=True)
 
 damage_desc = st.text_area("Характеристика повреждений:", key="damage_text", height=150)
 repair_desc = st.text_area("Требуемый ремонт:", key="repair_text", height=150)
@@ -484,7 +431,7 @@ st.header("4. Приложение: Фотоотчет")
 photo_report_doc = st.file_uploader("Загрузите готовый Фотоотчет (.docx)", type="docx")
 
 if template_source is not None:
-    if st.button("СГЕНЕРИРОВАТЬ ИТОГОВЫЙ ОТЧЕТ", type="primary", width='stretch'):
+    if st.button("СГЕНЕРИРОВАТЬ ИТОГОВЫЙ ОТЧЕТ", type="primary", use_container_width=True):
         try:
             doc = DocxTemplate(template_source if isinstance(template_source, str) else template_source.seek(0) or template_source)
             
@@ -522,10 +469,10 @@ if template_source is not None:
                 get_cached_preview.clear(); get_cached_db.clear()
                 st.success("✅ Отчет создан, таблицы обработаны, суммы подсчитаны и файл отправлен в Telegram!")
             
-            st.download_button(f"📥 СКАЧАТЬ ОТЧЕТ ({file_name})", file_bytes, file_name, mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", width='stretch')
+            st.download_button(f"📥 СКАЧАТЬ ОТЧЕТ ({file_name})", file_bytes, file_name, mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
         except Exception as e:
             st.error(f"Произошла ошибка: {e}")
 
 st.sidebar.title("📊 Живой отчет для шефа")
 if df_preview is not None and not df_preview.empty:
-    st.sidebar.dataframe(df_preview, width='stretch')
+    st.sidebar.dataframe(df_preview, use_container_width=True)
