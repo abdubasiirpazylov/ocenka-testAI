@@ -341,4 +341,217 @@ try:
                         model = genai.GenerativeModel('gemini-2.5-flash')
                         prompt = f"Это фото техпаспорта КР. Верни СТРОГО в формате JSON без markdown ключи: customer, region, district, aymak, street_address, car_model, reg_num, vin, tech_passport, year, color, engine_vol, body_type. Справочник регионов: {json.dumps(KG_REGIONS, ensure_ascii=False)}"
                         response = model.generate_content([prompt] + images_pil)
-                        raw_json = response.text.strip().strip("```json").strip("
+                        raw_json = response.text.strip().strip("```json").strip("```").strip()
+                        data = json.loads(raw_json)
+                        
+                        if data.get("region") in KG_REGIONS:
+                            st.session_state["region_select"] = data["region"]
+                            if data.get("district") in KG_REGIONS[data["region"]]:
+                                st.session_state["district_select"] = data["district"]
+                            else:
+                                st.session_state["district_select"] = KG_REGIONS[data["region"]][0]
+                                
+                        for key in ["customer", "aymak", "street_address", "car_model", "reg_num", "vin", "tech_passport", "year", "color", "engine_vol", "body_type"]:
+                            if key == "aymak": 
+                                st.session_state["aymak_input"] = data.get(key, "")
+                            else: 
+                                st.session_state[key] = data.get(key, "")
+                        st.success("✅ Данные распознаны!")
+                        st.rerun() 
+                    except Exception as e: 
+                        st.error(f"❌ Ошибка распознавания: {e}")
+
+    col_hdr1, col_hdr2 = st.columns([4, 1])
+    with col_hdr1: st.header("1. Ввод данных")
+    with col_hdr2: st.button("🧹 Очистить форму", on_click=clear_fields, use_container_width=True)
+
+    df_preview = get_cached_preview()
+    df_db = get_cached_db()
+
+    col1, col2 = st.columns(2)
+    with col1:
+        report_num = st.text_input("Номер отчета:", key="report_num")
+        contract_num = st.text_input("Номер договора:", key="contract_num")
+        date_ocenki = st.text_input("Дата оценки:", key="date_ocenki") 
+        date_otcheta = st.text_input("Дата отчета (для реестра):", key="date_otcheta", value=datetime.now().strftime("%d.%m.%Y"))
+        customer = st.text_input("ФИО Заказчика:", key="customer")
+        c_geo1, c_geo2, c_geo3 = st.columns(3)
+        with c_geo1: 
+            selected_region = st.selectbox("Область / Город:", list(KG_REGIONS.keys()), key="region_select")
+        with c_geo2: 
+            selected_district = st.selectbox("Район / Округ:", KG_REGIONS[selected_region], key="district_select")
+        with c_geo3: 
+            aymak = st.text_input("Село:", key="aymak_input")
+        street_detail = st.text_input("Улица, дом, квартира:", key="street_address")
+        
+        address_parts = [p for p in ["Кыргызская Республика", selected_region, selected_district, aymak.strip(), street_detail.strip()] if p]
+        full_address = ", ".join(address_parts)
+        
+        sum_num = st.text_input("Сумма ущерба цифрами (для титульного листа):", key="sum_num")
+        gen_sum = ""
+        if sum_num:
+            try: 
+                clean_val = re.sub(r'[^\d.]', '', sum_num.replace(",", "."))
+                gen_sum = num2words(int(float(clean_val)), lang='ru').lower()
+            except: 
+                pass
+        sum_words = st.text_input("Сумма ущерба прописью:", value=gen_sum)
+
+    with col2:
+        car_model = st.text_input("Марка, модель:", key="car_model")
+        reg_num = st.text_input("Гос. номер:", key="reg_num")
+        vin = st.text_input("VIN код:", key="vin")
+        tech_passport = st.text_input("Тех. паспорт №:", key="tech_passport")
+        year = st.text_input("Год выпуска:", key="year")
+        engine_vol = st.text_input("Объем ДВС:", key="engine_vol")
+        color = st.text_input("Цвет кузова:", key="color")
+        c_in1, c_in2 = st.columns(2)
+        with c_in1: 
+            body_type = st.text_input("Тип кузова:", key="body_type")
+        with c_in2: 
+            steering = st.selectbox("Руль:", ["Левый руль", "Правый руль"], key="steering")
+        service_cost = st.text_input("💰 Стоимость услуги (заработок):", key="service_cost")
+
+    st.header("2. Описание повреждений и ремонта")
+
+    DAMAGE_TEMPLATES = {
+        "--- Выберите шаблон ---": "",
+        "[Кузов] Передняя часть": "При осмотре установлены повреждения передней части кузова: деформация бампера, повреждение облицовочных элементов, смещение/деформация навесных деталей, нарушение ЛКП.",
+        "[Кузов] Задняя часть": "Выявлены повреждения задней части кузова: деформация бампера, повреждение крышки багажника/фонарей, нарушение геометрии сопряжений, повреждение ЛКП.",
+        "[Кузов] Боковая часть": "Установлены повреждения боковой части кузова: деформация дверей/крыльев, повреждение навесных элементов, нарушение ЛКП.",
+        "[Кузов] Силовые элементы": "Имеются признаки деформации силовых элементов кузова (лонжерон/панель), требующие восстановительных работ с последующим контролем геометрии.",
+        "[Оптика] Фара (трещина/разрушение)": "Блок-фара передняя (указать сторону): сквозное разрушение (трещина) рассеивателя.",
+        "[Оптика] Фара (царапины)": "Блок-фара передняя (указать сторону): глубокие царапины и потертости рассеивателя.",
+        "[Оптика] Фара (крепления)": "Блок-фара передняя (указать сторону): излом элементов крепления корпуса.",
+        "[Стекла] Лобовое (трещина)": "Стекло ветровое: линейная трещина в зоне видимости водителя (или: в зоне работы стеклоочистителей).",
+        "[Стекла] Лобовое (скол)": "Стекло ветровое: скол типа «звезда» (или «бычий глаз») с развивающимися трещинами.",
+        "[Стекла] Боковое (царапины)": "Стекло передней/задней двери (указать сторону): царапины (задиры) на внешней поверхности.",
+        "[Стекла] Боковое (разрушение)": "Стекло передней/задней двери (указать сторону): разрушение элемента (отсутствует).",
+        "[Стекла] Заднее (седан)": "Стекло задка: разрушение элемента / глубокие царапины.",
+        "[Стекла] Заднее (хэтчбек/внедорожник)": "Стекло двери задка (крышки багажника): повреждение нитей обогрева / разрушение."
+    }
+
+    REPAIR_TEMPLATES = {
+        "--- Выберите шаблон ---": "",
+        "[Кузов] Стандартные работы": "Для восстановления требуется выполнить комплекс слесарно-кузовных, рихтовочных и малярно-окрасочных работ с применением расходных материалов, с последующей сборкой и регулировкой навесных элементов.",
+        "[Оптика] Замена фары": "Демонтаж, монтаж (замена) блок-фары передней (указать сторону) в сборе.",
+        "[Стекла] Лобовое стекло (база)": "Замена стекла ветрового (вклейка) с использованием комплекта однокомпонентного полиуретанового клея.",
+        "[Стекла] Лобовое стекло (+датчики)": "Замена стекла ветрового (вклейка) с использованием комплекта однокомпонентного полиуретанового клея и переустановкой датчика дождя/камеры слежения.",
+        "[Стекла] Боковое стекло": "Снятие обивки двери, очистка внутренней полости от осколков, замена стекла двери.",
+        "[Стекла] Заднее стекло": "Замена стекла задка (вклейка) с подключением элементов обогрева."
+    }
+
+    if "damage_text" not in st.session_state: 
+        st.session_state.damage_text = DEFAULT_DAMAGE_SUFFIX
+    if "repair_text" not in st.session_state: 
+        st.session_state.repair_text = f"{REPAIR_TEMPLATES['[Кузов] Стандартные работы']}\n{DEFAULT_REPAIR_SUFFIX}"
+
+    def add_to_damage():
+        sel = st.session_state.dmg_selector
+        if sel and DAMAGE_TEMPLATES.get(sel):
+            curr = st.session_state.damage_text
+            val = DAMAGE_TEMPLATES[sel]
+            if DEFAULT_DAMAGE_SUFFIX in curr:
+                st.session_state.damage_text = curr.replace(DEFAULT_DAMAGE_SUFFIX, val + "\n" + DEFAULT_DAMAGE_SUFFIX)
+            else:
+                st.session_state.damage_text = curr + "\n" + val
+
+    def add_to_repair():
+        sel = st.session_state.rep_selector
+        if sel and REPAIR_TEMPLATES.get(sel):
+            curr = st.session_state.repair_text
+            val = REPAIR_TEMPLATES[sel]
+            if DEFAULT_REPAIR_SUFFIX in curr:
+                st.session_state.repair_text = curr.replace(DEFAULT_REPAIR_SUFFIX, val + "\n" + DEFAULT_REPAIR_SUFFIX)
+            else:
+                st.session_state.repair_text = curr + "\n" + val
+
+    col_dmg, col_rep = st.columns(2)
+    with col_dmg:
+        st.selectbox("Конструктор осмотра:", list(DAMAGE_TEMPLATES.keys()), key="dmg_selector")
+        st.button("➕ Добавить в осмотр", on_click=add_to_damage, use_container_width=True)
+    with col_rep:
+        st.selectbox("Конструктор ремонта:", list(REPAIR_TEMPLATES.keys()), key="rep_selector")
+        st.button("➕ Добавить в ремонт", on_click=add_to_repair, use_container_width=True)
+
+    damage_desc = st.text_area("Характеристика повреждений:", key="damage_text", height=150)
+    repair_desc = st.text_area("Требуемый ремонт:", key="repair_text", height=150)
+
+    def format_text(text):
+        rt = RichText()
+        lines = [line.strip() for line in text.split('\n') if line.strip()]
+        for i, line in enumerate(lines): 
+            if i < len(lines) - 1:
+                rt.add(line + '\n') 
+            else:
+                rt.add(line)
+        return rt
+
+    st.header("3. Смета и дополнительные контакты")
+    st.info("💡 Загрузите файл со сметой (.docx) от шефа. Приложение само распознает таблицы и автоматически посчитает ИТОГО для пункта Согласования.")
+    calc_report_doc = st.file_uploader("Загрузите файл с расчетами (Смета .docx)", type="docx")
+
+    st.markdown("**Точечные добавки (если нужно дополнить фирменные примечания под таблицами):**")
+    c_ex1, c_ex2, c_ex3 = st.columns(3)
+    with c_ex1: 
+        extra_services = st.text_area("Доп. контакты для Услуг:", key="extra_services", height=100)
+    with c_ex2: 
+        extra_parts = st.text_area("Доп. ссылки для Запчастей:", key="extra_parts", height=100)
+    with c_ex3: 
+        extra_materials = st.text_area("Доп. данные для Материалов:", key="extra_materials", height=100)
+
+    st.header("4. Приложение: Фотоотчет")
+    photo_report_doc = st.file_uploader("Загрузите готовый Фотоотчет (.docx)", type="docx")
+
+    if template_source is not None:
+        if st.button("СГЕНЕРИРОВАТЬ ИТОГОВЫЙ ОТЧЕТ", type="primary", use_container_width=True):
+            try:
+                doc = DocxTemplate(template_source if isinstance(template_source, str) else template_source.seek(0) or template_source)
+                
+                subdoc_photo = doc.new_subdoc(photo_report_doc) if photo_report_doc else "Фотоотчет не приложен."
+                
+                approval_text = ""
+                if calc_report_doc:
+                    smart_buffer, approval_text = process_smart_calc_tables(calc_report_doc, extra_services, extra_parts, extra_materials)
+                    subdoc_calc = doc.new_subdoc(smart_buffer) if smart_buffer else "Ошибка обработки таблиц."
+                else:
+                    subdoc_calc = "Файл со сметой не был приложен."
+
+                context = {
+                    "REPORT_NUM": report_num, "CONTRACT_NUM": contract_num, "DATE": date_ocenki,
+                    "CUSTOMER_NAME": customer, "ADDRESS": full_address, "CAR_MODEL": car_model,
+                    "REG_NUM": reg_num, "VIN": vin, "TECH_PASSPORT": tech_passport,
+                    "YEAR": year, "ENGINE_VOL": engine_vol, "COLOR": color, "BODY_TYPE": body_type,
+                    "STEERING": steering, "TOTAL_SUM_NUM": sum_num, "TOTAL_SUM_WORDS": sum_words,
+                    "DAMAGE_DESC": format_text(damage_desc), "REPAIR_DESC": format_text(repair_desc),
+                    "CALC_TABLES": subdoc_calc,
+                    "APPROVAL_BLOCK": format_text(approval_text),
+                    "PHOTO_TABLE": subdoc_photo 
+                }
+                doc.render(context)
+                
+                buffer = io.BytesIO()
+                doc.save(buffer)
+                file_bytes = buffer.getvalue()
+                file_name = f"{reg_num.strip() or 'Без_номера'}.docx"
+                
+                with st.spinner("Отправка в Telegram..."):
+                    tg_status = upload_to_telegram(file_bytes, file_name)
+                
+                if append_to_google_sheets([report_num, car_model, reg_num, date_ocenki, date_otcheta, service_cost, tg_status], [report_num, reg_num, vin, tech_passport, date_otcheta, tg_status]):
+                    get_cached_preview.clear()
+                    get_cached_db.clear()
+                    st.success("✅ Отчет создан, таблицы обработаны, суммы подсчитаны и файл отправлен в Telegram!")
+                
+                st.download_button(f"📥 СКАЧАТЬ ОТЧЕТ ({file_name})", file_bytes, file_name, mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
+            except Exception as e:
+                st.error(f"Произошла ошибка при генерации отчета: {e}")
+
+    st.sidebar.title("📊 Живой отчет для шефа")
+    if df_preview is not None and not df_preview.empty:
+        st.sidebar.dataframe(df_preview, use_container_width=True)
+
+# Этот блок покажет красную табличку с текстом ошибки, если приложение сломается при запуске
+except Exception as e:
+    st.error(f"🚨 Критическая ошибка запуска: {e}")
+    st.code(traceback.format_exc())
