@@ -2,7 +2,6 @@ import streamlit as st
 from docxtpl import DocxTemplate, RichText
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt
 import io
 import os
 import re 
@@ -50,7 +49,6 @@ def upload_to_telegram(file_bytes, file_name):
     try:
         token = st.secrets.get("TELEGRAM_BOT_TOKEN", "")
         chat_id = st.secrets.get("TELEGRAM_CHAT_ID", "")
-        
         if not token or not chat_id:
             st.error("❌ Ошибка: В Secrets не добавлены настройки Telegram!")
             return "Ошибка настроек"
@@ -113,18 +111,12 @@ def format_sum(val):
     return f"{val:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
 
 # =========================================================================
-# ПАРСЕР СМЕТЫ: Cambria, 100% Ширина, Жесткая привязка мест
+# БЕЗОПАСНЫЙ ПАРСЕР СМЕТЫ (Cambria + 100% Ширина)
 # =========================================================================
 def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=""):
     try:
         doc_in = docx.Document(uploaded_file)
         doc_out = docx.Document()
-        
-        # Задаем базовый шрифт для всего создаваемого текста
-        style = doc_out.styles['Normal']
-        style.font.name = 'Cambria'
-        style.font.size = Pt(11)
-        
         tables_found = {}
         
         def format_table_smart(tbl_element):
@@ -142,7 +134,6 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             
             rows = tbl_element.findall(qn('w:tr'))
             if len(rows) > 0:
-                # 2. Меняем шрифт на Cambria во ВСЕХ ячейках и делаем жирным заголовок
                 for row_idx, row in enumerate(rows):
                     for tc in row.findall(qn('w:tc')):
                         for p in tc.findall(qn('w:p')):
@@ -168,7 +159,7 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
                                         b = OxmlElement('w:b')
                                         rPr.append(b)
                 
-                # 3. Удаляем нумерацию
+                # Удаляем нумерацию (2-ю строку)
                 if len(rows) > 1:
                     tbl_element.remove(rows[1])
 
@@ -219,7 +210,7 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             if ext_serv.strip():
                 note_text += f"\nДополнительно: {ext_serv.strip()}"
             add_styled_run(p_note, note_text)
-            doc_out.add_paragraph() # Отступ после блока
+            doc_out.add_paragraph() 
             
             last_row_text = " ".join([cell.text for cell in tables_found['services'].rows[-1].cells])
             val = parse_sum_from_text(last_row_text)
@@ -242,7 +233,7 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             if ext_parts.strip():
                 note_text += f"\nДополнительные ссылки: {ext_parts.strip()}"
             add_styled_run(p_note, note_text)
-            doc_out.add_paragraph() # Отступ после блока
+            doc_out.add_paragraph()
             
             last_row_text = " ".join([cell.text for cell in tables_found['parts'].rows[-1].cells])
             val = parse_sum_from_text(last_row_text)
