@@ -6,6 +6,6 @@ pandas
 gspread
 google-auth
 openpyxl
-google-genai
+google-generativeai
 Pillow
 requests
