@@ -128,6 +128,30 @@ def parse_sum_from_text(text):
 def format_sum(val):
     return f"{val:,.2f}".replace(',', 'X').replace('.', ',').replace('X', ' ')
 
+def find_duplicate_matches(dfs, checks):
+    """Ищет точные совпадения непустых значений (техпаспорт, гос.номер, VIN,
+    номер отчета, ФИО заказчика) в любой из колонок ранее сохраненных отчетов,
+    чтобы предупредить об уже существующем/повторном отчете."""
+    warnings = []
+    for field_label, value in checks:
+        value_norm = (value or "").strip().lower()
+        if not value_norm:
+            continue
+        for sheet_label, df in dfs:
+            if df is None or df.empty:
+                continue
+            for col in df.columns:
+                try:
+                    matches = df[df[col].astype(str).str.strip().str.lower() == value_norm]
+                except Exception:
+                    continue
+                if not matches.empty:
+                    for _, row in matches.iterrows():
+                        row_preview = ", ".join(f"{k}: {v}" for k, v in row.items() if str(v).strip())
+                        warnings.append(f"⚠️ **{field_label}** «{value}» уже встречается в «{sheet_label}» (колонка «{col}») — {row_preview}")
+                    break  # одной найденной колонки в этом листе достаточно
+    return warnings
+
 def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=""):
     try:
         doc_in = docx.Document(uploaded_file)
@@ -157,13 +181,13 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
                                     rPr = OxmlElement('w:rPr')
                                     r.insert(0, rPr)
 
-                                # Шрифт Cambria для ВСЕХ строк таблицы (не только заголовка)
+                                # Шрифт Times New Roman для ВСЕХ строк таблицы (не только заголовка)
                                 rFonts = rPr.find(qn('w:rFonts'))
                                 if rFonts is None:
                                     rFonts = OxmlElement('w:rFonts')
                                     rPr.append(rFonts)
                                 for attr in ('w:ascii', 'w:hAnsi', 'w:cs', 'w:eastAsia'):
-                                    rFonts.set(qn(attr), 'Cambria')
+                                    rFonts.set(qn(attr), 'Times New Roman')
 
                                 # Жирный шрифт только для строки заголовка (первая строка)
                                 if row_idx == 0:
@@ -177,15 +201,15 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
 
             return tbl_element
 
-        def apply_cambria(run):
-            run.font.name = 'Cambria'
+        def apply_font(run):
+            run.font.name = 'Times New Roman'
             rPr = run._element.get_or_add_rPr()
             rFonts = rPr.find(qn('w:rFonts'))
             if rFonts is None:
                 rFonts = OxmlElement('w:rFonts')
                 rPr.append(rFonts)
             for attr in ('w:ascii', 'w:hAnsi', 'w:cs', 'w:eastAsia'):
-                rFonts.set(qn(attr), 'Cambria')
+                rFonts.set(qn(attr), 'Times New Roman')
 
         for table in doc_in.tables:
             prev_elm = table._element.getprevious()
@@ -216,7 +240,7 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             p_title = doc_out.add_paragraph()
             r_title = p_title.add_run("Перечень и стоимость затрат (услуг), необходимых для восстановления:")
             r_title.bold = True
-            apply_cambria(r_title)
+            apply_font(r_title)
             
             copied_tbl = copy.deepcopy(tables_found['services']._element)
             copied_tbl = format_table_smart(copied_tbl)
@@ -225,12 +249,12 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             p_note = doc_out.add_paragraph()
             r_note = p_note.add_run("Примечание: ")
             r_note.bold = True
-            apply_cambria(r_note)
+            apply_font(r_note)
             note_text = "стоимость нормо-часа ремонтно-восстановительных работ (1500,00 сом) определена согласно анализу стоимости услуг на станциях технического обслуживания: ИП «Сергей», +996702200885; +996553535533; +996550444488, +996559885102, +996550180555; +996555495545."
             if ext_serv.strip():
                 note_text += f"\nДополнительно: {ext_serv.strip()}"
             r_note_body = p_note.add_run(note_text + "\n")
-            apply_cambria(r_note_body)
+            apply_font(r_note_body)
             
             last_row_text = " ".join([cell.text for cell in tables_found['services'].rows[-1].cells])
             val = parse_sum_from_text(last_row_text)
@@ -243,7 +267,7 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             p_title = doc_out.add_paragraph()
             r_title = p_title.add_run("Стоимость запасных частей:")
             r_title.bold = True
-            apply_cambria(r_title)
+            apply_font(r_title)
             
             copied_tbl = copy.deepcopy(tables_found['parts']._element)
             copied_tbl = format_table_smart(copied_tbl)
@@ -252,12 +276,12 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             p_note = doc_out.add_paragraph()
             r_note = p_note.add_run("Примечание: ")
             r_note.bold = True
-            apply_cambria(r_note)
+            apply_font(r_note)
             note_text = "указана средняя стоимость запасных частей, поддержанных оригинальных, дубликатов на основании анализа рынка ЕАЭС.\nСсылки: в качестве информации была использована база данных ОсОО «Гарант Оценка»; интернет-ресурсы: mashina.kg, lalafo.kg; +996 551 411 711; +996 504 386 999; +996 500 524 624; +996 556 522 516; +996 707 008 833; +996 707 380 001."
             if ext_parts.strip():
                 note_text += f"\nДополнительные ссылки: {ext_parts.strip()}"
             r_note_body = p_note.add_run(note_text + "\n")
-            apply_cambria(r_note_body)
+            apply_font(r_note_body)
             
             last_row_text = " ".join([cell.text for cell in tables_found['parts'].rows[-1].cells])
             val = parse_sum_from_text(last_row_text)
@@ -270,7 +294,7 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             p_title = doc_out.add_paragraph()
             r_title = p_title.add_run("Стоимость материалов:")
             r_title.bold = True
-            apply_cambria(r_title)
+            apply_font(r_title)
             
             copied_tbl = copy.deepcopy(tables_found['materials']._element)
             copied_tbl = format_table_smart(copied_tbl)
@@ -279,12 +303,12 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             p_note = doc_out.add_paragraph()
             r_note = p_note.add_run("Примечание: ")
             r_note.bold = True
-            apply_cambria(r_note)
+            apply_font(r_note)
             note_text = "указана средняя стоимость материалов, источники конъюнктурного анализа: +996 708 707 332; +996 13 54 46; +996 550 98 77 01; +996 553 40 03 98"
             if ext_mat.strip():
                 note_text += f"\nДополнительно: {ext_mat.strip()}"
             r_note_body = p_note.add_run(note_text + "\n")
-            apply_cambria(r_note_body)
+            apply_font(r_note_body)
             
             last_row_text = " ".join([cell.text for cell in tables_found['materials'].rows[-1].cells])
             val = parse_sum_from_text(last_row_text)
@@ -411,6 +435,19 @@ with col2:
     with c_in1: body_type = st.text_input("Тип кузова:", key="body_type")
     with c_in2: steering = st.selectbox("Руль:", ["Левый руль", "Правый руль"], key="steering")
     service_cost = st.text_input("💰 Стоимость услуги (заработок):", key="service_cost")
+
+dup_warnings = find_duplicate_matches(
+    dfs=[("Живой отчет для шефа", df_preview), ("База_проверок", df_db)],
+    checks=[
+        ("Номер отчета", report_num),
+        ("ФИО Заказчика", customer),
+        ("Тех. паспорт", tech_passport),
+        ("Гос. номер", reg_num),
+        ("VIN код", vin),
+    ]
+)
+if dup_warnings:
+    st.warning("🔁 Похоже, такой отчет уже создавался ранее — проверь, чтобы случайно не задвоить:\n\n" + "\n\n".join(dup_warnings))
 
 st.header("2. Описание повреждений и ремонта")
 
