@@ -362,8 +362,10 @@ if AI_READY:
                         district_val = data.get("district", "")
                         st.session_state["district_select"] = district_val if district_val in KG_REGIONS[data["region"]] else KG_REGIONS[data["region"]][0]
                     for key in ["customer", "aymak", "street_address", "car_model", "reg_num", "vin", "tech_passport", "year", "color", "engine_vol", "body_type"]:
-                        if key == "aymak": st.session_state["aymak_input"] = data.get(key, "")
-                        else: st.session_state[key] = data.get(key, "")
+                        raw_val = data.get(key, "")
+                        str_val = "" if raw_val is None else str(raw_val)
+                        if key == "aymak": st.session_state["aymak_input"] = str_val
+                        else: st.session_state[key] = str_val
                     st.success("✅ Данные распознаны!")
                     st.rerun() 
                 except Exception as e:
