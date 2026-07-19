@@ -127,9 +127,12 @@ def force_font_everywhere(document, font_name='Times New Roman'):
         rFonts = rPr.find(qn('w:rFonts'))
         if rFonts is None:
             rFonts = OxmlElement('w:rFonts')
-            rPr.append(rFonts)
+            rPr.insert(0, rFonts)
         for attr in ('w:ascii', 'w:hAnsi', 'w:cs', 'w:eastAsia'):
             rFonts.set(qn(attr), font_name)
+        for theme_attr in ('w:asciiTheme', 'w:hAnsiTheme', 'w:cstheme', 'w:eastAsiaTheme'):
+            if rFonts.get(qn(theme_attr)) is not None:
+                del rFonts.attrib[qn(theme_attr)]
 
     def process_paragraphs(paragraphs):
         for p in paragraphs:
@@ -150,6 +153,22 @@ def force_font_everywhere(document, font_name='Times New Roman'):
                    section.first_page_footer, section.even_page_header, section.even_page_footer):
             process_paragraphs(hf.paragraphs)
             process_tables(hf.tables)
+
+RU_MONTHS = {
+    1: "января", 2: "февраля", 3: "марта", 4: "апреля", 5: "мая", 6: "июня",
+    7: "июля", 8: "августа", 9: "сентября", 10: "октября", 11: "ноября", 12: "декабря"
+}
+
+def date_to_words(date_str):
+    """Преобразует дату из формата ДД.ММ.ГГГГ в '19 июля 2026г.'"""
+    date_str = (date_str or "").strip()
+    for fmt in ("%d.%m.%Y", "%d.%m.%y"):
+        try:
+            d = datetime.strptime(date_str, fmt)
+            return f"{d.day} {RU_MONTHS[d.month]} {d.year}г."
+        except ValueError:
+            continue
+    return date_str  # если формат не распознан — вернуть как есть, не ломать генерацию
 
 def parse_sum_from_text(text):
     clean_text = text.replace('\xa0', ' ')
@@ -220,9 +239,12 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
                                 rFonts = rPr.find(qn('w:rFonts'))
                                 if rFonts is None:
                                     rFonts = OxmlElement('w:rFonts')
-                                    rPr.append(rFonts)
+                                    rPr.insert(0, rFonts)  # rFonts должен идти первым в rPr, иначе Word может проигнорировать шрифт
                                 for attr in ('w:ascii', 'w:hAnsi', 'w:cs', 'w:eastAsia'):
                                     rFonts.set(qn(attr), 'Times New Roman')
+                                for theme_attr in ('w:asciiTheme', 'w:hAnsiTheme', 'w:cstheme', 'w:eastAsiaTheme'):
+                                    if rFonts.get(qn(theme_attr)) is not None:
+                                        del rFonts.attrib[qn(theme_attr)]
 
                                 # Жирный шрифт только для строки заголовка (первая строка)
                                 if row_idx == 0:
@@ -239,9 +261,12 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             rFonts = rPr.find(qn('w:rFonts'))
             if rFonts is None:
                 rFonts = OxmlElement('w:rFonts')
-                rPr.append(rFonts)
+                rPr.insert(0, rFonts)
             for attr in ('w:ascii', 'w:hAnsi', 'w:cs', 'w:eastAsia'):
                 rFonts.set(qn(attr), 'Times New Roman')
+            for theme_attr in ('w:asciiTheme', 'w:hAnsiTheme', 'w:cstheme', 'w:eastAsiaTheme'):
+                if rFonts.get(qn(theme_attr)) is not None:
+                    del rFonts.attrib[qn(theme_attr)]
 
         for table in doc_in.tables:
             prev_elm = table._element.getprevious()
@@ -580,7 +605,7 @@ if template_source is not None:
 
             context = {
                 "REPORT_NUM": report_num, "CONTRACT_NUM": contract_num, "DATE": date_ocenki,
-                "REPORT_LETTER_DATE": date_otcheta,
+                "REPORT_LETTER_DATE": date_to_words(date_otcheta),
                 "CUSTOMER_NAME": customer, "ADDRESS": full_address, "CAR_MODEL": car_model,
                 "REG_NUM": reg_num, "VIN": vin, "TECH_PASSPORT": tech_passport,
                 "YEAR": year, "ENGINE_VOL": engine_vol, "COLOR": color, "BODY_TYPE": body_type,
