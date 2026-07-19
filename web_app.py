@@ -1,5 +1,6 @@
 import streamlit as st
-from docxtpl import DocxTemplate, RichText
+from docxtpl import DocxTemplate, RichText, InlineImage
+from docx.shared import Cm
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 import io
@@ -397,6 +398,10 @@ if os.path.exists(TEMPLATE_NAME):
 else:
     template_source = st.file_uploader("Загрузите шаблон отчета", type="docx")
 
+cover_photo_file = st.file_uploader("📷 Фото автомобиля для титульной страницы", type=["jpg", "jpeg", "png"])
+if cover_photo_file:
+    st.image(cover_photo_file, caption="Так фото попадёт на титульную страницу", width=200)
+
 if AI_READY:
     with st.expander("🤖 Умный сканер техпаспорта", expanded=True):
         sts_images = st.file_uploader("Загрузить фото техпаспорта", type=["jpg", "jpeg", "png"], accept_multiple_files=True)
@@ -560,6 +565,12 @@ if template_source is not None:
             
             subdoc_photo = doc.new_subdoc(photo_report_doc) if photo_report_doc else "Фотоотчет не приложен."
             
+            if cover_photo_file:
+                cover_photo_file.seek(0)
+                cover_photo_ctx = InlineImage(doc, cover_photo_file, width=Cm(7.15))
+            else:
+                cover_photo_ctx = ""
+            
             approval_text = ""
             if calc_report_doc:
                 smart_buffer, approval_text = process_smart_calc_tables(calc_report_doc, extra_services, extra_parts, extra_materials)
@@ -569,6 +580,7 @@ if template_source is not None:
 
             context = {
                 "REPORT_NUM": report_num, "CONTRACT_NUM": contract_num, "DATE": date_ocenki,
+                "REPORT_LETTER_DATE": date_otcheta,
                 "CUSTOMER_NAME": customer, "ADDRESS": full_address, "CAR_MODEL": car_model,
                 "REG_NUM": reg_num, "VIN": vin, "TECH_PASSPORT": tech_passport,
                 "YEAR": year, "ENGINE_VOL": engine_vol, "COLOR": color, "BODY_TYPE": body_type,
@@ -576,7 +588,8 @@ if template_source is not None:
                 "DAMAGE_DESC": format_text(damage_desc), "REPAIR_DESC": format_text(repair_desc),
                 "CALC_TABLES": subdoc_calc,
                 "APPROVAL_BLOCK": format_text(approval_text),
-                "PHOTO_TABLE": subdoc_photo 
+                "PHOTO_TABLE": subdoc_photo,
+                "COVER_PHOTO": cover_photo_ctx
             }
             doc.render(context)
             force_font_everywhere(doc.docx)
