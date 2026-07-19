@@ -304,14 +304,20 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             p_title._p.addnext(copied_tbl)
             
             p_note = doc_out.add_paragraph()
-            r_note = p_note.add_run("Примечание: ")
-            r_note.bold = True
-            apply_font(r_note)
-            note_text = "стоимость нормо-часа ремонтно-восстановительных работ (1500,00 сом) определена согласно анализу стоимости услуг на станциях технического обслуживания: ИП «Сергей», +996702200885; +996553535533; +996550444488, +996559885102, +996550180555; +996555495545."
-            if ext_serv.strip():
-                note_text += f"\nДополнительно: {ext_serv.strip()}"
-            r_note_body = p_note.add_run(note_text + "\n")
+            r_note_label = p_note.add_run("Примечание: ")
+            r_note_label.bold = True
+            apply_font(r_note_label)
+            r_note_body = p_note.add_run("стоимость нормо-часа ремонтно-восстановительных работ (1 500,00 сом) определена согласно анализу стоимости услуг на станциях кузовного ремонта и окраски (СКРО) и специализированных станциях технического обслуживания (ССТО).")
             apply_font(r_note_body)
+            
+            p_contacts = doc_out.add_paragraph()
+            r_contacts = p_contacts.add_run("Контактные данные: СКРО и ССТО: +996 702 200 885; +996 553 535 533; +996 550 444 488, +996 559 885 102, +996 550 180 555; +996 555 495 545.")
+            apply_font(r_contacts)
+            
+            if ext_serv.strip():
+                p_extra = doc_out.add_paragraph()
+                r_extra = p_extra.add_run(f"Дополнительно: {ext_serv.strip()}")
+                apply_font(r_extra)
             
             last_row_text = " ".join([cell.text for cell in tables_found['services'].rows[-1].cells])
             val = parse_sum_from_text(last_row_text)
@@ -331,14 +337,24 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             p_title._p.addnext(copied_tbl)
             
             p_note = doc_out.add_paragraph()
-            r_note = p_note.add_run("Примечание: ")
-            r_note.bold = True
-            apply_font(r_note)
-            note_text = "указана средняя стоимость запасных частей, поддержанных оригинальных, дубликатов на основании анализа рынка ЕАЭС.\nСсылки: в качестве информации была использована база данных ОсОО «Гарант Оценка»; интернет-ресурсы: mashina.kg, lalafo.kg; +996 551 411 711; +996 504 386 999; +996 500 524 624; +996 556 522 516; +996 707 008 833; +996 707 380 001."
-            if ext_parts.strip():
-                note_text += f"\nДополнительные ссылки: {ext_parts.strip()}"
-            r_note_body = p_note.add_run(note_text + "\n")
+            r_note_label = p_note.add_run("Примечание: ")
+            r_note_label.bold = True
+            apply_font(r_note_label)
+            r_note_body = p_note.add_run("указана средняя стоимость запасных частей, поддержанных оригинальных, дубликатов на основании анализа рынка ЕАЭС.")
             apply_font(r_note_body)
+            
+            p_contacts1 = doc_out.add_paragraph()
+            r_contacts1 = p_contacts1.add_run("Контакты сервисных магазинов: +996 551 411 711; +996 504 386 999; +996 500 524 624; +996 556 522 516; +996 707 008 833; +996 707 380 001, 0705002295.")
+            apply_font(r_contacts1)
+            
+            p_contacts2 = doc_out.add_paragraph()
+            r_contacts2 = p_contacts2.add_run("Контакты точек сбыта на рынке Кудайберген, рынок Дордой, Дордой Моторс: +996 705 002 295; +996 705 000 828.")
+            apply_font(r_contacts2)
+            
+            if ext_parts.strip():
+                p_extra = doc_out.add_paragraph()
+                r_extra = p_extra.add_run(f"Дополнительные ссылки: {ext_parts.strip()}")
+                apply_font(r_extra)
             
             last_row_text = " ".join([cell.text for cell in tables_found['parts'].rows[-1].cells])
             val = parse_sum_from_text(last_row_text)
@@ -358,14 +374,20 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
             p_title._p.addnext(copied_tbl)
             
             p_note = doc_out.add_paragraph()
-            r_note = p_note.add_run("Примечание: ")
-            r_note.bold = True
-            apply_font(r_note)
-            note_text = "указана средняя стоимость материалов, источники конъюнктурного анализа: +996 708 707 332; +996 13 54 46; +996 550 98 77 01; +996 553 40 03 98"
-            if ext_mat.strip():
-                note_text += f"\nДополнительно: {ext_mat.strip()}"
-            r_note_body = p_note.add_run(note_text + "\n")
+            r_note_label = p_note.add_run("Примечание: ")
+            r_note_label.bold = True
+            apply_font(r_note_label)
+            r_note_body = p_note.add_run("указана средняя стоимость материалов, источники конъюнктурного анализа.")
             apply_font(r_note_body)
+            
+            p_contacts = doc_out.add_paragraph()
+            r_contacts = p_contacts.add_run("Контакты специализированных магазинов: +996 708 707 332; +996 13 54 46; +996 550 98 77 01; +996 553 40 03 98.")
+            apply_font(r_contacts)
+            
+            if ext_mat.strip():
+                p_extra = doc_out.add_paragraph()
+                r_extra = p_extra.add_run(f"Дополнительно: {ext_mat.strip()}")
+                apply_font(r_extra)
             
             last_row_text = " ".join([cell.text for cell in tables_found['materials'].rows[-1].cells])
             val = parse_sum_from_text(last_row_text)
