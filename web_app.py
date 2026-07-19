@@ -116,6 +116,40 @@ def get_cached_db():
         return _sanitize_for_display(raw)
     except: return pd.DataFrame()
 
+def force_font_everywhere(document, font_name='Times New Roman'):
+    """Принудительно ставит один шрифт на ВЕСЬ документ целиком: основной текст
+    шаблона, все таблицы (включая вложенные в фотоотчет и смету, которые
+    подмешиваются docxtpl как subdoc-и), а также колонтитулы."""
+    def set_run_font(r):
+        r.font.name = font_name
+        rPr = r._element.get_or_add_rPr()
+        rFonts = rPr.find(qn('w:rFonts'))
+        if rFonts is None:
+            rFonts = OxmlElement('w:rFonts')
+            rPr.append(rFonts)
+        for attr in ('w:ascii', 'w:hAnsi', 'w:cs', 'w:eastAsia'):
+            rFonts.set(qn(attr), font_name)
+
+    def process_paragraphs(paragraphs):
+        for p in paragraphs:
+            for r in p.runs:
+                set_run_font(r)
+
+    def process_tables(tables):
+        for t in tables:
+            for row in t.rows:
+                for cell in row.cells:
+                    process_paragraphs(cell.paragraphs)
+                    process_tables(cell.tables)
+
+    process_paragraphs(document.paragraphs)
+    process_tables(document.tables)
+    for section in document.sections:
+        for hf in (section.header, section.footer, section.first_page_header,
+                   section.first_page_footer, section.even_page_header, section.even_page_footer):
+            process_paragraphs(hf.paragraphs)
+            process_tables(hf.tables)
+
 def parse_sum_from_text(text):
     clean_text = text.replace('\xa0', ' ')
     match = re.search(r'(\d[\d\s]*[.,]\d+)', clean_text)
@@ -195,9 +229,6 @@ def process_smart_calc_tables(uploaded_file, ext_serv="", ext_parts="", ext_mat=
                                     if b is None:
                                         b = OxmlElement('w:b')
                                         rPr.append(b)
-                
-                if len(rows) > 1:
-                    tbl_element.remove(rows[1])
 
             return tbl_element
 
@@ -548,6 +579,7 @@ if template_source is not None:
                 "PHOTO_TABLE": subdoc_photo 
             }
             doc.render(context)
+            force_font_everywhere(doc.docx)
             
             buffer = io.BytesIO()
             doc.save(buffer)
